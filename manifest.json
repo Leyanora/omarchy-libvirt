@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "id": "leyanora.libvirt",
-  "name": "Omarchy qemu widget",
-  "version": "0.1.1",
+  "name": "libvirt control",
+  "version": "0.1.2",
   "author": "Leyanora",
   "description": "libvirt frontend for the bar: a green/red state light per domain, play/stop controls, and click-to-open console.",
   "kinds": [
@@ -12,10 +12,10 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "displayName": "Omarchy qemu widget",
-    "description": "libvirt domains: state and power controls",
+    "displayName": "libvirt control",
+    "description": "libvirt/qemu: state, power controls and access.",
     "category": "System",
-    "allowMultiple": true,
+    "allowMultiple": false,
     "defaultSection": "right"
   }
 }

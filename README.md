@@ -85,7 +85,7 @@ units for the current boot.
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/Leyanora/omarchy-qemu.git --enable
+omarchy plugin add https://github.com/Leyanora/omarchy-libvirt.git --enable
 ```
 
 The widget expects the connection to work without a password prompt. If
