@@ -1,4 +1,4 @@
-# Omarchy qemu widget
+# Omarchy libvirt widget
 
 A libvirt frontend for the [Omarchy](https://omarchy.org/) bar. The bar item is
 a glyph, dimmed when nothing is running; the popup lists every domain on the
