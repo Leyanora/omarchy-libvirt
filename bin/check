@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# Validate this plugin against the schema the Omarchy shell enforces.
+# Run it before every commit; it mirrors what the shell does at load time.
+
+set -euo pipefail
+
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if ! command -v omarchy-plugin-validate >/dev/null 2>&1; then
+  echo "check: omarchy-plugin-validate not found; is Omarchy installed?" >&2
+  exit 1
+fi
+
+omarchy-plugin-validate "$ROOT"
+echo "check: $(jq -r '.id' "$ROOT/manifest.json") is valid"
