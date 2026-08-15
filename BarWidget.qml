@@ -56,11 +56,6 @@ BarWidget {
   // domains is [{ name, domainState }], sorted running → paused → shut off.
   property var domains: []
 
-  // Persistent networks that exist but are down. A domain wired to one cannot
-  // start until its network does, so this counts as "the connection is not
-  // fully up" alongside a hypervisor that will not answer at all.
-  property var inactiveNetworks: []
-
   property string lastError: ""
   property string actionError: ""
   property bool busy: false
@@ -75,7 +70,6 @@ BarWidget {
   readonly property bool connectionDown: lastError !== ""
 
   readonly property string connectionLabel: connectionDown ? "Disconnected" : "Connected"
-  readonly property bool needsBringUp: connectionDown || inactiveNetworks.length > 0
 
   readonly property string displayText: runningCount > 0 ? String(runningCount) : ""
   readonly property bool showLabel: !vertical && configuredShowCount && displayText !== ""
@@ -139,11 +133,10 @@ BarWidget {
   }
 
   // ---- Polling ---------------------------------------------------------
-  // Four fixed `virsh` calls regardless of how many domains exist, each line
+  // Three fixed `virsh` calls regardless of how many domains exist, each line
   // tagged in column 0 so a name containing spaces still parses:
   //   R <name>  running   P <name>  paused
-  //   A <name>  defined   N <name>  a persistent network that is down
-  //   E <text>  the connection failed
+  //   A <name>  defined   E <text>  the connection failed
   readonly property string pollScript: [
     "u=" + shq(configuredUri),
     "command -v virsh >/dev/null 2>&1 || { echo 'E virsh is not installed'; exit 0; }",
@@ -154,7 +147,6 @@ BarWidget {
     "fi",
     "virsh -c \"$u\" -q list --name --state-running 2>/dev/null | sed '/^$/d;s/^/R /'",
     "virsh -c \"$u\" -q list --name --state-paused 2>/dev/null | sed '/^$/d;s/^/P /'",
-    "virsh -c \"$u\" -q net-list --inactive --persistent --name 2>/dev/null | sed '/^$/d;s/^/N /'",
     "printf '%s\\n' \"$all\" | sed '/^$/d;s/^/A /'"
   ].join("\n")
 
@@ -162,7 +154,6 @@ BarWidget {
     var running = ({})
     var paused = ({})
     var names = []
-    var networks = []
     var error = ""
 
     var lines = String(text || "").split("\n")
@@ -174,7 +165,6 @@ BarWidget {
         case "E": error = value; break
         case "R": running[key(value)] = true; break
         case "P": paused[key(value)] = true; break
-        case "N": networks.push(value); break
         case "A": names.push(value); break
       }
     }
@@ -182,12 +172,9 @@ BarWidget {
     lastError = error
     if (error !== "") {
       domains = []
-      inactiveNetworks = []
       armedDomain = ""
       return
     }
-
-    inactiveNetworks = networks
 
     var list = []
     for (var j = 0; j < names.length; j++) {
@@ -244,49 +231,6 @@ BarWidget {
   function runAction(verb, domain) {
     if (domain === "") return
     runScript("virsh -c " + shq(configuredUri) + " " + verb + " " + shq(domain) + " >/dev/null")
-  }
-
-  // Bring the connection up: start whatever daemon the URI needs, wait for it
-  // to answer, then start any persistent network that is down. A session URI
-  // has no daemon to manage — virsh spawns `virtqemud --timeout=120` itself on
-  // first contact — so there the work is the networks alone. A system URI is
-  // behind systemd and polkit, and the prompt lands on Omarchy's polkit agent.
-  //
-  // `systemctl start` only, never `enable`: this is "make it work now", not a
-  // change to what the machine does at boot.
-  readonly property string bringUpScript: [
-    "u=" + shq(configuredUri),
-    "reachable() { virsh -c \"$u\" -q list --all --name >/dev/null 2>&1; }",
-    "if ! reachable; then",
-    "  case \"$u\" in",
-    "    *session*) : ;;",
-    "    *)",
-    "      units=''",
-    "      for s in virtqemud.socket virtnetworkd.socket virtstoraged.socket; do",
-    "        systemctl cat \"$s\" >/dev/null 2>&1 && units=\"$units $s\"",
-    "      done",
-    "      if [ -z \"$units\" ] && systemctl cat libvirtd.socket >/dev/null 2>&1; then",
-    "        units='libvirtd.socket'",
-    "      fi",
-    "      [ -n \"$units\" ] || { echo 'no libvirt systemd units on this host' >&2; exit 1; }",
-    "      systemctl start $units || exit 1",
-    "      ;;",
-    "  esac",
-    "fi",
-    // Socket activation answers quickly, but not instantly.
-    "for _ in 1 2 3 4 5 6 7 8 9 10; do",
-    "  reachable && break",
-    "  sleep 0.5",
-    "done",
-    "reachable || { echo \"still cannot reach $u\" >&2; exit 1; }",
-    "virsh -c \"$u\" -q net-list --inactive --persistent --name 2>/dev/null | while IFS= read -r n; do",
-    "  [ -n \"$n\" ] && virsh -c \"$u\" net-start \"$n\" >/dev/null 2>&1",
-    "done",
-    "exit 0"
-  ].join("\n")
-
-  function bringUp() {
-    runScript(bringUpScript)
   }
 
   function openConsole(domain) {
@@ -517,7 +461,7 @@ BarWidget {
         Text {
           id: title
           anchors.left: parent.left
-          anchors.right: connectButton.left
+          anchors.right: refreshButton.left
           anchors.rightMargin: Style.spacing.sm
           anchors.verticalCenter: parent.verticalCenter
           elide: Text.ElideRight
@@ -525,27 +469,6 @@ BarWidget {
           color: Color.popups.text
           font.family: popup.fontFamily
           font.pixelSize: Style.font.subtitle
-        }
-
-        // Only offered when there is something to bring up: a hypervisor that
-        // will not answer, or a network that is down.
-        PanelActionButton {
-          id: connectButton
-          anchors.right: refreshButton.left
-          anchors.rightMargin: Style.spacing.xxs
-          anchors.verticalCenter: parent.verticalCenter
-          iconText: root.needsBringUp ? "󰚦" : "󰚥"
-          tooltipText: root.connectionDown
-            ? "Start libvirt for this connection"
-            : (root.inactiveNetworks.length > 0
-              ? "Start " + root.inactiveNetworks.length + " inactive network(s)"
-              : "Connection is up")
-          foreground: root.needsBringUp ? Color.accent : popup.foreground
-          hoverColor: Color.accent
-          bordered: root.needsBringUp
-          fontFamily: popup.fontFamily
-          enabled: !root.busy && root.needsBringUp
-          onClicked: root.bringUp()
         }
 
         PanelActionButton {

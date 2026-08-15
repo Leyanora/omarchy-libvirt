@@ -15,8 +15,6 @@ connection with a state light, play/stop controls, and a click-to-open console.
   itself after four seconds. A shut off domain has nothing to force off.
 - **Clicking a domain's name** opens its console in `virt-viewer` — only while
   the domain is up, since a shut off one has no console to attach to.
-- **󰚦** brings the connection up. It only lights up when there is something to
-  do — see [Bringing the connection up](#bringing-the-connection-up).
 
 Left click the bar item for the popup, right click to open virt-manager, middle
 click or scroll to refresh.
@@ -79,9 +77,6 @@ Point the widget at it in `~/.config/omarchy/shell.json`:
 { "id": "leyanora.libvirt", "uri": "qemu:///system" }
 ```
 
-Skipping `systemctl enable` is fine — the popup's plug button starts those same
-units for the current boot.
-
 ## Install
 
 ```bash
@@ -95,27 +90,14 @@ the popup shows you the same error.
 ## The connection line
 
 Under the title, in place of the URI: **Connected** when libvirt answered the
-last poll, **Disconnected** in red when it did not — with the error below it
-and the plug button lit. The URI itself is on hover, which matters when two
-instances sit in the bar.
+last poll, **Disconnected** in red when it did not — with the error below it.
+The URI itself is on hover, which matters when two instances sit in the bar.
 
-## Bringing the connection up
-
-The plug button next to refresh is enabled only when the hypervisor will not
-answer, or when a persistent network is down. It does the smallest thing that
-makes VMs startable:
-
-- **`qemu:///session`** has no daemon to manage — `virsh` spawns
-  `virtqemud --timeout=120` itself on first contact — so the button's only work
-  there is starting inactive networks.
-- **`qemu:///system`** is behind systemd. The button runs
-  `systemctl start virtqemud.socket virtnetworkd.socket virtstoraged.socket`
-  (falling back to `libvirtd.socket` on hosts that still ship the monolithic
-  daemon), which prompts through Omarchy's polkit agent.
-
-It waits up to five seconds for the connection to answer, then starts any
-persistent network that is down. It uses `systemctl start`, never `enable` —
-this is "make it work now", not a change to what the machine does at boot.
+The widget only reads and drives domains; it never starts libvirt itself. If it
+says Disconnected, bring the connection up from a terminal — `systemctl start
+virtqemud.socket virtnetworkd.socket virtstoraged.socket` for `qemu:///system`,
+and `virsh -c qemu:///session list` for a session URI, which spawns its own
+`virtqemud`. Inactive networks are `virsh net-start <name>`.
 
 ## Silencing the shutdown crash toast
 
@@ -209,11 +191,10 @@ Bind either in `~/.config/hypr/bindings.lua`.
 
 ## How it reads state
 
-Four `virsh` calls per poll regardless of how many domains exist — every
-domain, the running ones, the paused ones, and any persistent network that is
-down — each line tagged in column 0 so a domain name containing spaces survives
-parsing. Everything else is a `virsh <verb> <domain>` with the name
-shell-quoted.
+Three `virsh` calls per poll regardless of how many domains exist — every
+domain, the running ones, the paused ones — each line tagged in column 0 so a
+domain name containing spaces survives parsing. Everything else is a
+`virsh <verb> <domain>` with the name shell-quoted.
 
 One action runs at a time — the buttons disable while it does. `virsh shutdown`
 and friends return as soon as the request is queued rather than when the guest
