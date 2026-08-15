@@ -4,25 +4,15 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// libvirt domains in the bar.
-//
-// The bar item is the glyph alone, dimmed when nothing is running; the count
-// lives in its tooltip. The popup lists every domain on the connection with a
-// green/amber/red state light and the actions that state allows — play a shut
-// off or paused domain, stop a running one, force off either. Clicking a
-// domain's name attaches a console to it.
-//
-// Everything goes through `virsh`, so the widget works against any libvirt URI
-// the user can already reach from a shell. It never asks for credentials of
-// its own: if `virsh -c <uri> list` fails in a terminal, it fails here too and
-// the error is shown in the popup.
+// libvirt domains in the bar: glyph + tooltip count, popup with a state light
+// and per-state actions per domain. All via `virsh`, no credentials of its
+// own — if the URI fails in a terminal it fails here, and the error shows.
 BarWidget {
   id: root
   moduleName: "leyanora.libvirt"
 
   // ---- Settings -------------------------------------------------------
-  // Overridable per instance in shell.json:
-  //   { "id": "leyanora.libvirt", "uri": "qemu:///system", "interval": 5 }
+  // Per instance in shell.json: { "id": "leyanora.libvirt", "uri": "…" }
   readonly property string configuredUri: setting("uri", "qemu:///session")
   readonly property string configuredIcon: setting("icon", "󰒋")
   readonly property int configuredInterval: Math.max(2, setting("interval", 10))
@@ -31,23 +21,16 @@ BarWidget {
   readonly property string configuredManager: setting("manager", "virt-manager -c " + shq(configuredUri))
   readonly property string configuredOnRightClick: setting("onRightClick", configuredManager)
 
-  // Clicking a domain name opens its console. {uri} and {name} are replaced
-  // with shell-quoted values, so any viewer works: remote-viewer, spicy, a
-  // wrapper script of your own.
+  // Console command; {uri} and {name} are substituted shell-quoted.
   readonly property string configuredConsole: setting("console", "virt-viewer --connect {uri} {name}")
 
-  // QEMU segfaults inside its SPICE teardown when libvirt SIGTERMs it at VM
-  // shutdown, so stopping a domain raises an Omarchy "Process crashed" toast
-  // for a process that was on its way out anyway. Opt in and this widget keeps
-  // a drop-in on omarchy-crash-watch that filters those out. Off by default:
-  // reconfiguring another service is not something a bar widget should do
-  // uninvited.
+  // QEMU segfaults in SPICE teardown at VM shutdown, raising a bogus Omarchy
+  // "Process crashed" toast. Opt in to filter it via an omarchy-crash-watch
+  // drop-in. Off by default: this reconfigures another service.
   readonly property bool configuredSuppressCrashToasts: setting("suppressCrashToasts", false)
   readonly property string configuredCrashIgnore: setting("crashIgnore", "^qemu-system-")
 
-  // The one place this widget departs from "never hardcode a color": a state
-  // light has to read as green or red to mean anything, and a themed accent
-  // does not. Overridable per instance all the same.
+  // The only hardcoded colors: a state light must read green/red, not themed.
   readonly property color colorRunning: setting("colorRunning", "#3fb950")
   readonly property color colorPaused: setting("colorPaused", "#d29922")
   readonly property color colorStopped: setting("colorStopped", "#f85149")
@@ -56,17 +39,11 @@ BarWidget {
   // domains is [{ name, domainState }], sorted running → paused → shut off.
   property var domains: []
 
-  // Persistent networks that exist but are down. A domain wired to one cannot
-  // start until its network does, so this counts as "the connection is not
-  // fully up" alongside a hypervisor that will not answer at all.
-  property var inactiveNetworks: []
-
   property string lastError: ""
   property string actionError: ""
   property bool busy: false
 
-  // The domain whose force-off button has been clicked once and is waiting
-  // for the confirming second click.
+  // Force-off clicked once, awaiting the confirming second click.
   property string armedDomain: ""
 
   readonly property int runningCount: countState("running")
@@ -75,7 +52,6 @@ BarWidget {
   readonly property bool connectionDown: lastError !== ""
 
   readonly property string connectionLabel: connectionDown ? "Disconnected" : "Connected"
-  readonly property bool needsBringUp: connectionDown || inactiveNetworks.length > 0
 
   readonly property string displayText: runningCount > 0 ? String(runningCount) : ""
   readonly property bool showLabel: !vertical && configuredShowCount && displayText !== ""
@@ -87,8 +63,8 @@ BarWidget {
       : runningCount + " of " + totalCount + " running")
 
   // ---- Popup lifecycle -------------------------------------------------
-  // The bar routes `omarchy-shell shell summon/hide/toggle <id>` to whichever
-  // widget exposes open/close/opened on its root, so keep these three names.
+  // `omarchy-shell shell summon/hide/toggle <id>` routes by these three names
+  // on the root — keep them.
   property bool popupOpen: false
 
   readonly property bool opened: popupOpen
@@ -109,9 +85,8 @@ BarWidget {
   }
 
   // ---- Helpers ---------------------------------------------------------
-  // Domain names are user-chosen strings that end up inside a shell command
-  // and as JS object keys. Quote them for the shell, and prefix them as keys
-  // so a domain called "constructor" cannot be mistaken for a live one.
+  // Domain names are user-chosen: quote for the shell, prefix as object keys
+  // so a domain called "constructor" cannot read as live.
   function shq(value) {
     return "'" + String(value).replace(/'/g, "'\\''") + "'"
   }
@@ -139,11 +114,8 @@ BarWidget {
   }
 
   // ---- Polling ---------------------------------------------------------
-  // Four fixed `virsh` calls regardless of how many domains exist, each line
-  // tagged in column 0 so a name containing spaces still parses:
-  //   R <name>  running   P <name>  paused
-  //   A <name>  defined   N <name>  a persistent network that is down
-  //   E <text>  the connection failed
+  // Three `virsh` calls per tick whatever the domain count. Column 0 tags the
+  // line so names with spaces parse: R running, P paused, A defined, E error.
   readonly property string pollScript: [
     "u=" + shq(configuredUri),
     "command -v virsh >/dev/null 2>&1 || { echo 'E virsh is not installed'; exit 0; }",
@@ -154,7 +126,6 @@ BarWidget {
     "fi",
     "virsh -c \"$u\" -q list --name --state-running 2>/dev/null | sed '/^$/d;s/^/R /'",
     "virsh -c \"$u\" -q list --name --state-paused 2>/dev/null | sed '/^$/d;s/^/P /'",
-    "virsh -c \"$u\" -q net-list --inactive --persistent --name 2>/dev/null | sed '/^$/d;s/^/N /'",
     "printf '%s\\n' \"$all\" | sed '/^$/d;s/^/A /'"
   ].join("\n")
 
@@ -162,7 +133,6 @@ BarWidget {
     var running = ({})
     var paused = ({})
     var names = []
-    var networks = []
     var error = ""
 
     var lines = String(text || "").split("\n")
@@ -174,7 +144,6 @@ BarWidget {
         case "E": error = value; break
         case "R": running[key(value)] = true; break
         case "P": paused[key(value)] = true; break
-        case "N": networks.push(value); break
         case "A": names.push(value); break
       }
     }
@@ -182,12 +151,9 @@ BarWidget {
     lastError = error
     if (error !== "") {
       domains = []
-      inactiveNetworks = []
       armedDomain = ""
       return
     }
-
-    inactiveNetworks = networks
 
     var list = []
     for (var j = 0; j < names.length; j++) {
@@ -204,8 +170,7 @@ BarWidget {
 
     domains = list
 
-    // A domain that stopped on its own no longer has a force-off button to
-    // confirm against, so drop the arming rather than leave it dangling.
+    // No force-off button left to confirm against once it stopped on its own.
     if (armedDomain !== "" && !running[key(armedDomain)] && !paused[key(armedDomain)])
       armedDomain = ""
   }
@@ -227,66 +192,17 @@ BarWidget {
   }
 
   // ---- Actions ---------------------------------------------------------
-  // One action at a time. `virsh shutdown` and friends return the moment the
-  // request is queued, so the state we want to display lands a second or two
-  // later — hence the settle timer rather than a single refresh.
+  // One at a time. virsh returns when the request is queued, not when the
+  // guest acts — hence the settle timer instead of a single refresh.
   property string actionScript: ""
 
-  function runScript(script) {
-    if (busy || script === "") return
+  function runAction(verb, domain) {
+    if (busy || domain === "") return
     actionError = ""
     armedDomain = ""
-    actionScript = script
+    actionScript = "virsh -c " + shq(configuredUri) + " " + verb + " " + shq(domain) + " >/dev/null"
     busy = true
     action.running = true
-  }
-
-  function runAction(verb, domain) {
-    if (domain === "") return
-    runScript("virsh -c " + shq(configuredUri) + " " + verb + " " + shq(domain) + " >/dev/null")
-  }
-
-  // Bring the connection up: start whatever daemon the URI needs, wait for it
-  // to answer, then start any persistent network that is down. A session URI
-  // has no daemon to manage — virsh spawns `virtqemud --timeout=120` itself on
-  // first contact — so there the work is the networks alone. A system URI is
-  // behind systemd and polkit, and the prompt lands on Omarchy's polkit agent.
-  //
-  // `systemctl start` only, never `enable`: this is "make it work now", not a
-  // change to what the machine does at boot.
-  readonly property string bringUpScript: [
-    "u=" + shq(configuredUri),
-    "reachable() { virsh -c \"$u\" -q list --all --name >/dev/null 2>&1; }",
-    "if ! reachable; then",
-    "  case \"$u\" in",
-    "    *session*) : ;;",
-    "    *)",
-    "      units=''",
-    "      for s in virtqemud.socket virtnetworkd.socket virtstoraged.socket; do",
-    "        systemctl cat \"$s\" >/dev/null 2>&1 && units=\"$units $s\"",
-    "      done",
-    "      if [ -z \"$units\" ] && systemctl cat libvirtd.socket >/dev/null 2>&1; then",
-    "        units='libvirtd.socket'",
-    "      fi",
-    "      [ -n \"$units\" ] || { echo 'no libvirt systemd units on this host' >&2; exit 1; }",
-    "      systemctl start $units || exit 1",
-    "      ;;",
-    "  esac",
-    "fi",
-    // Socket activation answers quickly, but not instantly.
-    "for _ in 1 2 3 4 5 6 7 8 9 10; do",
-    "  reachable && break",
-    "  sleep 0.5",
-    "done",
-    "reachable || { echo \"still cannot reach $u\" >&2; exit 1; }",
-    "virsh -c \"$u\" -q net-list --inactive --persistent --name 2>/dev/null | while IFS= read -r n; do",
-    "  [ -n \"$n\" ] && virsh -c \"$u\" net-start \"$n\" >/dev/null 2>&1",
-    "done",
-    "exit 0"
-  ].join("\n")
-
-  function bringUp() {
-    runScript(bringUpScript)
   }
 
   function openConsole(domain) {
@@ -298,9 +214,8 @@ BarWidget {
     close()
   }
 
-  // Force off is `virsh destroy`: it cuts power to a live VM and loses
-  // whatever the guest had not written out. Arm on the first click, act on
-  // the second, and disarm on a timer so a stray click cannot linger.
+  // `virsh destroy` loses unwritten guest state: arm, act on the second
+  // click, disarm on a timer so a stray click cannot linger.
   function forceOff(domain) {
     if (!configuredConfirmForceOff) {
       runAction("destroy", domain)
@@ -319,8 +234,7 @@ BarWidget {
     id: action
     command: ["bash", "-lc", root.actionScript]
     stderr: StdioCollector {
-      // virsh prefixes the useful line with a generic "error:" banner; the
-      // last line is the one worth showing.
+      // virsh banners the useful line; the last one is worth showing.
       onStreamFinished: {
         var lines = String(text || "").trim().split("\n")
         root.actionError = lines[lines.length - 1]
@@ -358,29 +272,21 @@ BarWidget {
 
   // ---- Crash toast suppression ----------------------------------------
   // Reconciles one systemd drop-in against configuredSuppressCrashToasts.
-  //
-  // Three things make this safe to run from a widget that exists once per
-  // monitor: an flock so the copies serialise, a content compare so an
-  // unchanged file costs nothing and no daemon-reload happens, and a marker
-  // line so the "off" branch can only ever delete this plugin's own file —
-  // never a drop-in the user wrote by hand.
+  // Safe from a per-monitor widget because of three things below: an flock
+  // (the copies race), a content compare (skips daemon-reload), and a marker
+  // line (the off branch can only delete our own file).
   property string crashToggleError: ""
 
-  // Built at call time rather than bound, like actionScript. A bound script
-  // read from inside a property-changed handler can still hold the previous
-  // value — the handler runs before every binding that shares the dependency
-  // has been re-evaluated, which silently wrote `want=0` while the same call
-  // saw the setting as true.
+  // Built at call time, not bound: a bound script read from a change handler
+  // still holds the old value — it runs before sibling bindings re-evaluate.
   property string crashToggleScript: ""
 
   function buildCrashToggleScript() {
     return [
     "set -u",
     "unit=omarchy-crash-watch.service",
-    // Not an Omarchy host, or too old to have the watcher: nothing to do.
-    // Probed on disk rather than with `systemctl cat`, which exits 1 from the
-    // shell's own process environment even though the user manager is
-    // perfectly reachable there (`is-active` answers fine).
+    // No watcher unit, nothing to do. Probed on disk, not with `systemctl
+    // cat` — that exits 1 from the shell's Process environment.
     "found=0",
     "for d in /usr/lib/systemd/user /etc/systemd/user \"${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user\"; do",
     "  [ -f \"$d/$unit\" ] && found=1",
@@ -411,15 +317,13 @@ BarWidget {
     ].join("\n")
   }
 
-  // Set while a reconcile is in flight and the settings changed under it. The
-  // host injects `settings` just after construction, so the run kicked off by
-  // Component.onCompleted is always working from the defaults — dropping the
-  // follow-up rather than queueing it would leave the drop-in unwritten.
+  // Settings changed mid-reconcile. The host injects `settings` after
+  // construction, so the Component.onCompleted run always sees defaults —
+  // queue the follow-up, dropping it would leave the drop-in unwritten.
   property bool crashTogglePending: false
 
   function reconcileCrashToasts() {
-    // The pattern lands inside a double-quoted systemd Environment= value, so
-    // a quote or newline in it would write a broken unit file.
+    // The pattern goes in a quoted systemd Environment= value.
     if (/["\n]/.test(configuredCrashIgnore)) {
       crashToggleError = "crashIgnore cannot contain quotes or newlines"
       return
@@ -509,7 +413,7 @@ BarWidget {
       anchors.fill: parent
       spacing: Style.spacing.sm
 
-      // Title and a manual refresh, since the poll interval can be long.
+      // Title and manual refresh, since the poll interval can be long.
       Item {
         width: parent.width
         implicitHeight: Math.max(title.implicitHeight, refreshButton.implicitHeight)
@@ -517,7 +421,7 @@ BarWidget {
         Text {
           id: title
           anchors.left: parent.left
-          anchors.right: connectButton.left
+          anchors.right: refreshButton.left
           anchors.rightMargin: Style.spacing.sm
           anchors.verticalCenter: parent.verticalCenter
           elide: Text.ElideRight
@@ -525,27 +429,6 @@ BarWidget {
           color: Color.popups.text
           font.family: popup.fontFamily
           font.pixelSize: Style.font.subtitle
-        }
-
-        // Only offered when there is something to bring up: a hypervisor that
-        // will not answer, or a network that is down.
-        PanelActionButton {
-          id: connectButton
-          anchors.right: refreshButton.left
-          anchors.rightMargin: Style.spacing.xxs
-          anchors.verticalCenter: parent.verticalCenter
-          iconText: root.needsBringUp ? "󰚦" : "󰚥"
-          tooltipText: root.connectionDown
-            ? "Start libvirt for this connection"
-            : (root.inactiveNetworks.length > 0
-              ? "Start " + root.inactiveNetworks.length + " inactive network(s)"
-              : "Connection is up")
-          foreground: root.needsBringUp ? Color.accent : popup.foreground
-          hoverColor: Color.accent
-          bordered: root.needsBringUp
-          fontFamily: popup.fontFamily
-          enabled: !root.busy && root.needsBringUp
-          onClicked: root.bringUp()
         }
 
         PanelActionButton {
@@ -561,10 +444,8 @@ BarWidget {
         }
       }
 
-      // Whether libvirt answered, not which connection it is. The URI is still
-      // worth having when two instances are in the bar, so it lives on hover.
+      // Whether libvirt answered, not which connection. URI on hover.
       Text {
-        id: connectionText
         width: parent.width
         elide: Text.ElideRight
         text: root.connectionLabel
@@ -589,8 +470,7 @@ BarWidget {
         foreground: popup.foreground
       }
 
-      // The domain list. Capped so a host with thirty VMs scrolls instead of
-      // growing a popup taller than the screen.
+      // Capped: thirty VMs scroll rather than outgrow the screen.
       ListView {
         id: list
         width: parent.width
@@ -635,10 +515,8 @@ BarWidget {
             color: row.isRunning ? root.colorRunning : (row.isPaused ? root.colorPaused : root.colorStopped)
           }
 
-          // The name is the console handle: click it to attach a viewer. Only
-          // a domain that is up has a console to attach to.
+          // The name is the console handle — only if the domain is up.
           Text {
-            id: nameText
             anchors.left: dot.right
             anchors.leftMargin: Style.spacing.md
             anchors.right: actions.left
@@ -705,9 +583,8 @@ BarWidget {
               onClicked: root.runAction("shutdown", row.domainName)
             }
 
-            // A guest with no ACPI handler — anything mid-install, anything
-            // hung — ignores `virsh shutdown` entirely, so stopping it at all
-            // needs the hard path. Two clicks, because it discards guest state.
+            // A guest with no ACPI handler ignores `virsh shutdown`, so the
+            // hard path is the only one. Two clicks: it discards guest state.
             PanelActionButton {
               visible: !row.isOff
               iconText: "󱐋"
@@ -783,8 +660,7 @@ BarWidget {
   }
 
   // ---- IPC -------------------------------------------------------------
-  // Reachable from scripts and keybindings:
-  //   omarchy-shell leyanora.libvirt toggle
+  // e.g. `omarchy-shell leyanora.libvirt toggle`, from scripts or keybinds.
   IpcHandler {
     target: "leyanora.libvirt"
 

@@ -1,7 +1,0 @@
-*.qmlc
-*.jsc
-.qmlls.ini
-*~
-*.swp
-.DS_Store
-CLAUDE.md
