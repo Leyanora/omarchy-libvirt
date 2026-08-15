@@ -21,6 +21,10 @@ connection with a state light, play/stop controls, and a click-to-open console.
 Left click the bar item for the popup, right click to open virt-manager, middle
 click or scroll to refresh.
 
+Optionally, it can also stop Omarchy announcing the QEMU segfault that stopping
+a VM provokes — off by default, see
+[Silencing the shutdown crash toast](#silencing-the-shutdown-crash-toast).
+
 ## Prerequisites
 
 ```bash
@@ -113,6 +117,51 @@ It waits up to five seconds for the connection to answer, then starts any
 persistent network that is down. It uses `systemctl start`, never `enable` —
 this is "make it work now", not a change to what the machine does at boot.
 
+## Silencing the shutdown crash toast
+
+Stopping a VM tends to raise an Omarchy "Process crashed: qemu-system-x86_64"
+notification. That is not this plugin, and not `virt-viewer` either: libvirt
+SIGTERMs QEMU, and QEMU segfaults inside its own SPICE teardown on the way out.
+The domain log shows the whole story:
+
+```
+qemu-system-x86_64: terminating on signal 15 from pid … (/usr/bin/virtqemud)
+qemu-system-x86_64: warning: Spice: …spice_server_remove_interface: VD_INTERFACE_REMOVING unsupported
+shutting down, reason=shutdown
+```
+
+The guest has already stopped by then, so nothing is lost — it is a real
+upstream bug with no consequence beyond the toast.
+
+**Why handle it here, in a plugin that does not cause it?** Because this is
+where you press the button that triggers it. Every ■ and 󱐋 in the popup ends
+in libvirt SIGTERMing QEMU, so the toast is a direct consequence of using the
+widget, and the widget is where you would go looking to make it stop. The
+filter it writes is Omarchy's own supported one — nothing is patched, nothing
+is monkey-patched, and the whole change is a single file that goes away when
+you turn the setting off.
+
+```json
+{ "id": "leyanora.libvirt", "suppressCrashToasts": true }
+```
+
+With that set, the widget keeps a drop-in at
+`~/.config/systemd/user/omarchy-crash-watch.service.d/50-leyanora.libvirt.conf`
+that sets `OMARCHY_CRASH_IGNORE` for Omarchy's crash watcher, and reloads it.
+Setting the key back to `false` removes the file again.
+
+It is **off by default**, because reconfiguring another service is not
+something a bar widget should do uninvited. Two things worth knowing before
+turning it on:
+
+- The watcher filters on the executable name only, so this also silences a
+  QEMU crash that happens *mid-run* — a VM dying under you goes unannounced.
+- The widget will only ever delete a drop-in carrying its own marker comment,
+  so a file you wrote by hand at that path is left alone.
+
+`omarchy-toggle-crash-capture` remains the way to turn crash announcements off
+wholesale, if you would rather not filter per-binary.
+
 ## Settings
 
 Every key goes in the widget's entry in `~/.config/omarchy/shell.json`. The
@@ -143,6 +192,8 @@ entry is keyed by the plugin id, `leyanora.libvirt` — not by the display name:
 | `colorRunning` | `#3fb950` | State light, running |
 | `colorPaused` | `#d29922` | State light, paused |
 | `colorStopped` | `#f85149` | State light, shut off |
+| `suppressCrashToasts` | `false` | Filter QEMU crash toasts, see below |
+| `crashIgnore` | `^qemu-system-` | Regex of executable names to filter when the above is on |
 
 `allowMultiple` is on, so a second entry with `"uri": "qemu:///system"` gives
 you both connections side by side in the bar.

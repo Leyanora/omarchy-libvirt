@@ -36,6 +36,15 @@ BarWidget {
   // wrapper script of your own.
   readonly property string configuredConsole: setting("console", "virt-viewer --connect {uri} {name}")
 
+  // QEMU segfaults inside its SPICE teardown when libvirt SIGTERMs it at VM
+  // shutdown, so stopping a domain raises an Omarchy "Process crashed" toast
+  // for a process that was on its way out anyway. Opt in and this widget keeps
+  // a drop-in on omarchy-crash-watch that filters those out. Off by default:
+  // reconfiguring another service is not something a bar widget should do
+  // uninvited.
+  readonly property bool configuredSuppressCrashToasts: setting("suppressCrashToasts", false)
+  readonly property string configuredCrashIgnore: setting("crashIgnore", "^qemu-system-")
+
   // The one place this widget departs from "never hardcode a color": a state
   // light has to read as green or red to mean anything, and a themed accent
   // does not. Overridable per instance all the same.
@@ -347,6 +356,107 @@ BarWidget {
     onTriggered: root.armedDomain = ""
   }
 
+  // ---- Crash toast suppression ----------------------------------------
+  // Reconciles one systemd drop-in against configuredSuppressCrashToasts.
+  //
+  // Three things make this safe to run from a widget that exists once per
+  // monitor: an flock so the copies serialise, a content compare so an
+  // unchanged file costs nothing and no daemon-reload happens, and a marker
+  // line so the "off" branch can only ever delete this plugin's own file —
+  // never a drop-in the user wrote by hand.
+  property string crashToggleError: ""
+
+  // Built at call time rather than bound, like actionScript. A bound script
+  // read from inside a property-changed handler can still hold the previous
+  // value — the handler runs before every binding that shares the dependency
+  // has been re-evaluated, which silently wrote `want=0` while the same call
+  // saw the setting as true.
+  property string crashToggleScript: ""
+
+  function buildCrashToggleScript() {
+    return [
+    "set -u",
+    "unit=omarchy-crash-watch.service",
+    // Not an Omarchy host, or too old to have the watcher: nothing to do.
+    // Probed on disk rather than with `systemctl cat`, which exits 1 from the
+    // shell's own process environment even though the user manager is
+    // perfectly reachable there (`is-active` answers fine).
+    "found=0",
+    "for d in /usr/lib/systemd/user /etc/systemd/user \"${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user\"; do",
+    "  [ -f \"$d/$unit\" ] && found=1",
+    "done",
+    "[ \"$found\" = 1 ] || exit 0",
+    "dir=\"${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/$unit.d\"",
+    "file=\"$dir/50-" + moduleName + ".conf\"",
+    "marker='# Managed by the " + moduleName + " Omarchy plugin'",
+    "lock=\"${XDG_RUNTIME_DIR:-/tmp}/" + moduleName + ".crash-toggle.lock\"",
+    "exec 9>\"$lock\" || exit 0",
+    "flock 9 || exit 0",
+    "want=" + (configuredSuppressCrashToasts ? "1" : "0"),
+    "pattern=" + shq(configuredCrashIgnore),
+    "if [ \"$want\" = 1 ]; then",
+    "  desired=\"$marker",
+    "[Service]",
+    "Environment=\\\"OMARCHY_CRASH_IGNORE=$pattern\\\"\"",
+    "  [ -f \"$file\" ] && [ \"$(cat \"$file\")\" = \"$desired\" ] && exit 0",
+    "  mkdir -p \"$dir\" || exit 1",
+    "  printf '%s\\n' \"$desired\" >\"$file.tmp\" && mv \"$file.tmp\" \"$file\" || exit 1",
+    "else",
+    "  [ -f \"$file\" ] || exit 0",
+    "  grep -qF \"$marker\" \"$file\" || exit 0",
+    "  rm -f \"$file\" || exit 1",
+    "fi",
+    "systemctl --user daemon-reload || exit 1",
+    "systemctl --user restart \"$unit\" || exit 1"
+    ].join("\n")
+  }
+
+  // Set while a reconcile is in flight and the settings changed under it. The
+  // host injects `settings` just after construction, so the run kicked off by
+  // Component.onCompleted is always working from the defaults — dropping the
+  // follow-up rather than queueing it would leave the drop-in unwritten.
+  property bool crashTogglePending: false
+
+  function reconcileCrashToasts() {
+    // The pattern lands inside a double-quoted systemd Environment= value, so
+    // a quote or newline in it would write a broken unit file.
+    if (/["\n]/.test(configuredCrashIgnore)) {
+      crashToggleError = "crashIgnore cannot contain quotes or newlines"
+      return
+    }
+    crashToggleError = ""
+    if (crashToggle.running) {
+      crashTogglePending = true
+      return
+    }
+    crashTogglePending = false
+    crashToggleScript = buildCrashToggleScript()
+    crashToggle.running = true
+  }
+
+  Component.onCompleted: reconcileCrashToasts()
+  onConfiguredSuppressCrashToastsChanged: reconcileCrashToasts()
+  onConfiguredCrashIgnoreChanged: reconcileCrashToasts()
+
+  Process {
+    id: crashToggle
+    command: ["bash", "-lc", root.crashToggleScript]
+    stderr: StdioCollector {
+      onStreamFinished: {
+        var message = String(text || "").trim()
+        if (message !== "") root.crashToggleError = message.split("\n").pop()
+      }
+    }
+    onExited: function (exitCode, exitStatus) {
+      if (exitCode !== 0 && root.crashToggleError === "")
+        root.crashToggleError = "could not update the crash-watch drop-in"
+      if (root.crashTogglePending) {
+        root.crashTogglePending = false
+        root.reconcileCrashToasts()
+      }
+    }
+  }
+
   // ---- Bar button ------------------------------------------------------
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -628,7 +738,9 @@ BarWidget {
         width: parent.width
         visible: text !== ""
         wrapMode: Text.WordWrap
-        text: root.lastError !== "" ? root.lastError : root.actionError
+        text: root.lastError !== ""
+          ? root.lastError
+          : (root.actionError !== "" ? root.actionError : root.crashToggleError)
         color: popup.urgent
         font.family: popup.fontFamily
         font.pixelSize: Style.font.bodySmall
