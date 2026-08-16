@@ -4,50 +4,51 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// libvirt domains in the bar: glyph + tooltip count, popup with a state light
-// and per-state actions per domain. All via `virsh`, no credentials of its
-// own — if the URI fails in a terminal it fails here, and the error shows.
+// libvirt domains in the bar, driven entirely through `virsh`.
 BarWidget {
   id: root
   moduleName: "leyanora.libvirt"
 
   // ---- Settings -------------------------------------------------------
-  // Per instance in shell.json: { "id": "leyanora.libvirt", "uri": "…" }
   readonly property string configuredUri: setting("uri", "qemu:///session")
   readonly property string configuredIcon: setting("icon", "󰒋")
   readonly property int configuredInterval: Math.max(2, setting("interval", 10))
   readonly property bool configuredShowCount: setting("showCount", false)
   readonly property bool configuredConfirmForceOff: setting("confirmForceOff", true)
+  readonly property bool configuredConfirmDiscardSaved: setting("confirmDiscardSaved", true)
+  readonly property bool configuredConfirmSnapshotRevert: setting("confirmSnapshotRevert", true)
+  readonly property bool configuredShowSnapshots: setting("showSnapshots", true)
   readonly property string configuredManager: setting("manager", "virt-manager -c " + shq(configuredUri))
   readonly property string configuredOnRightClick: setting("onRightClick", configuredManager)
 
-  // Console command; {uri} and {name} are substituted shell-quoted.
   readonly property string configuredConsole: setting("console", "virt-viewer --connect {uri} {name}")
 
-  // QEMU segfaults in SPICE teardown at VM shutdown, raising a bogus Omarchy
-  // "Process crashed" toast. Filtered via an omarchy-crash-watch drop-in that
-  // the widget writes on every start. On by default — the toast is a direct
-  // consequence of the popup's own buttons — and the drop-in lives in the
-  // runtime dir, so it is gone once the plugin stops being loaded.
   readonly property bool configuredSuppressCrashToasts: setting("suppressCrashToasts", true)
   readonly property string configuredCrashIgnore: setting("crashIgnore", "^qemu-system-")
 
-  // The only hardcoded colors: a state light must read green/red, not themed.
+  // The file's only hardcoded colors: a state light must read green/red.
   readonly property color colorRunning: setting("colorRunning", "#3fb950")
   readonly property color colorPaused: setting("colorPaused", "#d29922")
   readonly property color colorStopped: setting("colorStopped", "#f85149")
 
   // ---- State ----------------------------------------------------------
-  // domains is [{ name, domainState }], sorted by name — never by state, so a
-  // row does not move when the domain it names starts or stops.
   property var domains: []
 
   property string lastError: ""
   property string actionError: ""
   property bool busy: false
 
-  // Force-off clicked once, awaiting the confirming second click.
+  property string busyDomain: ""
+
+  // armedDomain/armedVerb: the split halves, so a poll can disarm without parsing.
+  property string armedAction: ""
   property string armedDomain: ""
+  property string armedVerb: ""
+
+  property var details: ({})
+
+  property string expandedDomain: ""
+  property string snapshotDomain: ""
 
   readonly property int runningCount: countState("running")
   readonly property int totalCount: domains.length
@@ -66,8 +67,7 @@ BarWidget {
       : runningCount + " of " + totalCount + " running")
 
   // ---- Popup lifecycle -------------------------------------------------
-  // `omarchy-shell shell summon/hide/toggle <id>` routes by these three names
-  // on the root — keep them.
+  // opened/open()/close() are how the shell routes summon/hide/toggle — keep the names.
   property bool popupOpen: false
 
   readonly property bool opened: popupOpen
@@ -79,7 +79,9 @@ BarWidget {
 
   function close() {
     popupOpen = false
-    armedDomain = ""
+    clearArm()
+    expandedDomain = ""
+    snapshotDomain = ""
   }
 
   function togglePanel() {
@@ -88,14 +90,46 @@ BarWidget {
   }
 
   // ---- Helpers ---------------------------------------------------------
-  // Domain names are user-chosen: quote for the shell, prefix as object keys
-  // so a domain called "constructor" cannot read as live.
+  // Domain and snapshot names are user-chosen: shq() for shells, key() for lookups.
   function shq(value) {
     return "'" + String(value).replace(/'/g, "'\\''") + "'"
   }
 
   function key(name) {
     return "d:" + name
+  }
+
+  // JSON, not a joined string: ("a b", "") must not collide with ("a", "b").
+  function armKey(verb, domain, snapshot) {
+    return JSON.stringify([verb, domain, snapshot || ""])
+  }
+
+  function isArmed(verb, domain, snapshot) {
+    return armedAction !== "" && armedAction === armKey(verb, domain, snapshot)
+  }
+
+  function arm(verb, domain, snapshot) {
+    armedAction = armKey(verb, domain, snapshot)
+    armedDomain = domain
+    armedVerb = verb
+    disarm.restart()
+  }
+
+  function clearArm() {
+    disarm.stop()
+    armedAction = ""
+    armedDomain = ""
+    armedVerb = ""
+  }
+
+  function confirmed(verb, domain, snapshot, confirm) {
+    if (!confirm) return true
+    if (isArmed(verb, domain, snapshot)) {
+      clearArm()
+      return true
+    }
+    arm(verb, domain, snapshot)
+    return false
   }
 
   function countState(state) {
@@ -111,8 +145,7 @@ BarWidget {
   }
 
   // ---- Polling ---------------------------------------------------------
-  // Three `virsh` calls per tick whatever the domain count. Column 0 tags the
-  // line so names with spaces parse: R running, P paused, A defined, E error.
+  // Column 0 tags each line (R/P/A/M/E) so names with spaces parse. Never exits nonzero.
   readonly property string pollScript: [
     "u=" + shq(configuredUri),
     "command -v virsh >/dev/null 2>&1 || { echo 'E virsh is not installed'; exit 0; }",
@@ -123,12 +156,15 @@ BarWidget {
     "fi",
     "virsh -c \"$u\" -q list --name --state-running 2>/dev/null | sed '/^$/d;s/^/R /'",
     "virsh -c \"$u\" -q list --name --state-paused 2>/dev/null | sed '/^$/d;s/^/P /'",
+    // --all is required: `list` defaults to active, a saved domain never is.
+    "virsh -c \"$u\" -q list --all --name --with-managed-save 2>/dev/null | sed '/^$/d;s/^/M /'",
     "printf '%s\\n' \"$all\" | sed '/^$/d;s/^/A /'"
   ].join("\n")
 
   function applyPoll(text) {
     var running = ({})
     var paused = ({})
+    var saved = ({})
     var names = []
     var error = ""
 
@@ -141,6 +177,7 @@ BarWidget {
         case "E": error = value; break
         case "R": running[key(value)] = true; break
         case "P": paused[key(value)] = true; break
+        case "M": saved[key(value)] = true; break
         case "A": names.push(value); break
       }
     }
@@ -148,7 +185,10 @@ BarWidget {
     lastError = error
     if (error !== "") {
       domains = []
-      armedDomain = ""
+      details = ({})
+      clearArm()
+      expandedDomain = ""
+      snapshotDomain = ""
       return
     }
 
@@ -157,22 +197,37 @@ BarWidget {
       var name = names[j]
       list.push({
         name: name,
-        domainState: running[key(name)] ? "running" : (paused[key(name)] ? "paused" : "shut off")
+        domainState: running[key(name)] ? "running" : (paused[key(name)] ? "paused" : "shut off"),
+        saved: !!saved[key(name)]
       })
     }
-    // By name only. Ranking by state first meant a domain jumped position the
-    // moment it started or stopped — including under the cursor, mid-click, on
-    // a poll the user did not ask for. Order now depends on which domains are
-    // defined, never on what they are doing.
+    // By name only, never by state: a row must not move when its domain does.
     list.sort(function (a, b) {
       return a.name.localeCompare(b.name)
     })
 
     domains = list
 
-    // No force-off button left to confirm against once it stopped on its own.
-    if (armedDomain !== "" && !running[key(armedDomain)] && !paused[key(armedDomain)])
-      armedDomain = ""
+    // Disarm once the button being confirmed against is gone.
+    if (armedDomain !== "") {
+      var defined = false
+      for (var k = 0; k < list.length; k++)
+        if (list[k].name === armedDomain) defined = true
+      var live = !!running[key(armedDomain)] || !!paused[key(armedDomain)]
+      if (!defined || (armedVerb === "destroy" && !live))
+        clearArm()
+    }
+
+    // Drop cached dominfo for departed domains so a redefined one re-reads.
+    var kept = ({})
+    for (var m = 0; m < list.length; m++) {
+      var cached = details[key(list[m].name)]
+      if (cached !== undefined) kept[key(list[m].name)] = cached
+    }
+    details = kept
+
+    if (expandedDomain !== "" && details[key(expandedDomain)] === undefined)
+      fetchDetail(expandedDomain)
   }
 
   Process {
@@ -192,16 +247,27 @@ BarWidget {
   }
 
   // ---- Actions ---------------------------------------------------------
-  // One at a time. virsh returns when the request is queued, not when the
-  // guest acts — hence the settle timer instead of a single refresh.
+  // One at a time. virsh returns when queued, not when the guest acts — hence settle.
   property string actionScript: ""
 
   function runAction(verb, domain) {
     if (busy || domain === "") return
     actionError = ""
-    armedDomain = ""
+    clearArm()
     actionScript = "virsh -c " + shq(configuredUri) + " " + verb + " " + shq(domain) + " >/dev/null"
     busy = true
+    busyDomain = domain
+    action.running = true
+  }
+
+  // Prebuilt command for the verbs that need flags; never sourced from a setting.
+  function runScript(script, domain) {
+    if (busy) return
+    actionError = ""
+    clearArm()
+    actionScript = script
+    busy = true
+    busyDomain = domain
     action.running = true
   }
 
@@ -214,27 +280,21 @@ BarWidget {
     close()
   }
 
-  // `virsh destroy` loses unwritten guest state: arm, act on the second
-  // click, disarm on a timer so a stray click cannot linger.
   function forceOff(domain) {
-    if (!configuredConfirmForceOff) {
+    if (confirmed("destroy", domain, "", configuredConfirmForceOff))
       runAction("destroy", domain)
-      return
-    }
-    if (armedDomain === domain) {
-      disarm.stop()
-      runAction("destroy", domain)
-      return
-    }
-    armedDomain = domain
-    disarm.restart()
+  }
+
+  function discardSaved(domain) {
+    if (confirmed("managedsave-remove", domain, "", configuredConfirmDiscardSaved))
+      runAction("managedsave-remove", domain)
   }
 
   Process {
     id: action
     command: ["bash", "-lc", root.actionScript]
     stderr: StdioCollector {
-      // virsh banners the useful line; the last one is worth showing.
+      // virsh banners the useful line last.
       onStreamFinished: {
         var lines = String(text || "").trim().split("\n")
         root.actionError = lines[lines.length - 1]
@@ -242,10 +302,12 @@ BarWidget {
     }
     onExited: function (exitCode, exitStatus) {
       root.busy = false
+      root.busyDomain = ""
       if (exitCode === 0) root.actionError = ""
       settle.ticks = 0
       settle.restart()
       root.refresh()
+      if (root.snapshotDomain !== "") root.fetchSnapshots(root.snapshotDomain)
     }
   }
 
@@ -267,31 +329,167 @@ BarWidget {
   Timer {
     id: disarm
     interval: 4000
-    onTriggered: root.armedDomain = ""
+    onTriggered: root.clearArm()
+  }
+
+  // ---- Domain detail ---------------------------------------------------
+  // Own Process, deliberately not gated on `busy`: a read must not queue behind an action.
+  property string detailScript: ""
+  property string detailDomain: ""
+
+  function buildDetailScript(domain) {
+    return "virsh -c " + shq(configuredUri) + " -q dominfo " + shq(domain)
+      + " 2>/dev/null | sed 's/^/I /'"
+  }
+
+  function fetchDetail(domain) {
+    if (domain === "" || detail.running) return
+    detailDomain = domain
+    detailScript = buildDetailScript(domain)
+    detail.running = true
+  }
+
+  // "CPU(s): 4" + "Max memory: 8388608 KiB" + "OS Type: hvm" -> "4 vCPU · 8 GiB · hvm"
+  function applyDetail(text) {
+    if (detailDomain === "") return
+
+    var cpus = ""
+    var memory = ""
+    var osType = ""
+
+    var lines = String(text || "").split("\n")
+    for (var i = 0; i < lines.length; i++) {
+      if (lines[i].charAt(0) !== "I") continue
+      var field = lines[i].substring(2)
+      var split = field.indexOf(":")
+      if (split < 0) continue
+      var label = field.substring(0, split).trim()
+      var value = field.substring(split + 1).trim()
+      if (label === "CPU(s)") cpus = value
+      else if (label === "Max memory") memory = value
+      else if (label === "OS Type") osType = value
+    }
+
+    var parts = []
+    if (cpus !== "") parts.push(cpus + " vCPU")
+    var kib = parseInt(memory, 10)
+    if (!isNaN(kib) && kib > 0)
+      parts.push(kib >= 1048576
+        ? (Math.round(kib / 104857.6) / 10) + " GiB"
+        : Math.round(kib / 1024) + " MiB")
+    if (osType !== "") parts.push(osType)
+
+    var next = ({})
+    for (var existing in details) next[existing] = details[existing]
+    next[key(detailDomain)] = parts.join("  ·  ")
+    details = next
+  }
+
+  Process {
+    id: detail
+    command: ["bash", "-lc", root.detailScript]
+    stdout: StdioCollector {
+      onStreamFinished: root.applyDetail(text)
+    }
+    onExited: function (exitCode, exitStatus) {
+      // A row expanded while this fetch was in flight; catch it up.
+      if (root.expandedDomain !== "" && root.details[root.key(root.expandedDomain)] === undefined)
+        root.fetchDetail(root.expandedDomain)
+    }
+  }
+
+  onExpandedDomainChanged: {
+    if (expandedDomain !== "" && details[key(expandedDomain)] === undefined)
+      fetchDetail(expandedDomain)
+  }
+
+  // ---- Snapshots -------------------------------------------------------
+  // `--name` prints one per line so names with spaces survive. Never exits nonzero.
+  property var snapshots: []
+  property string snapshotScript: ""
+
+  function fetchSnapshots(domain) {
+    if (domain === "") return
+    snapshotScript = "virsh -c " + shq(configuredUri) + " -q snapshot-list "
+      + shq(domain) + " --name 2>/dev/null | sed '/^$/d;s/^/N /'"
+    snapshotList.running = false
+    snapshotList.running = true
+  }
+
+  function applySnapshots(text) {
+    var found = []
+    var lines = String(text || "").split("\n")
+    for (var i = 0; i < lines.length; i++)
+      if (lines[i].charAt(0) === "N") found.push(lines[i].substring(2))
+    snapshots = found
+  }
+
+  Process {
+    id: snapshotList
+    command: ["bash", "-lc", root.snapshotScript]
+    stdout: StdioCollector {
+      onStreamFinished: root.applySnapshots(text)
+    }
+  }
+
+  // Driven by the property, not openSnapshots(), so no route in leaves a stale list.
+  onSnapshotDomainChanged: {
+    snapshots = []
+    if (snapshotDomain !== "") fetchSnapshots(snapshotDomain)
+  }
+
+  function openSnapshots(domain) {
+    clearArm()
+    snapshotDomain = domain
+  }
+
+  function closeSnapshots() {
+    clearArm()
+    snapshotDomain = ""
+  }
+
+  // Typed input only — names from snapshot-list must pass through untouched.
+  function cleanSnapshotName(value) {
+    return String(value === undefined || value === null ? "" : value)
+      .replace(/^[\s\/]+|[\s\/]+$/g, "")
+      .replace(/[\s\/]+/g, "-")
+      .replace(/^\.+/, "")
+  }
+
+  function createSnapshot(domain, name) {
+    var clean = cleanSnapshotName(name)
+    var command = "virsh -c " + shq(configuredUri) + " snapshot-create-as --domain " + shq(domain)
+    // Empty, or sanitised away to nothing, gets libvirt's automatic name.
+    if (clean !== "") command += " --name " + shq(clean)
+    runScript(command + " >/dev/null", domain)
+  }
+
+  function revertSnapshot(domain, name) {
+    if (confirmed("snapshot-revert", domain, name, configuredConfirmSnapshotRevert))
+      runScript("virsh -c " + shq(configuredUri) + " snapshot-revert " + shq(domain)
+        + " " + shq(name) + " >/dev/null", domain)
+  }
+
+  function deleteSnapshot(domain, name) {
+    if (confirmed("snapshot-delete", domain, name, configuredConfirmSnapshotRevert))
+      runScript("virsh -c " + shq(configuredUri) + " snapshot-delete " + shq(domain)
+        + " " + shq(name) + " >/dev/null", domain)
   }
 
   // ---- Crash toast suppression ----------------------------------------
-  // Reconciles one systemd drop-in against configuredSuppressCrashToasts.
-  // Safe from a per-monitor widget because of three things below: an flock
-  // (the copies race), a content compare (skips daemon-reload), and a marker
-  // line (the removal branches can only delete our own file).
-  //
-  // The drop-in goes in the *runtime* unit dir, not ~/.config. Omarchy has no
-  // uninstall hook for plugins, so a persistent file would outlive the plugin
-  // and keep silencing QEMU crashes forever. Runtime means the widget rewrites
-  // it every start and nothing survives the session it was written in.
+  // Four constraints, all load-bearing: flock (one widget per monitor, they race),
+  // content compare (skips daemon-reload), marker line (only ever deletes our own
+  // file), runtime dir not ~/.config (no uninstall hook, so it must not outlive us).
   property string crashToggleError: ""
 
-  // Built at call time, not bound: a bound script read from a change handler
-  // still holds the old value — it runs before sibling bindings re-evaluate.
+  // Built at call time, never bound: a handler runs before siblings re-evaluate.
   property string crashToggleScript: ""
 
   function buildCrashToggleScript() {
     return [
     "set -u",
     "unit=omarchy-crash-watch.service",
-    // No watcher unit, nothing to do. Probed on disk, not with `systemctl
-    // cat` — that exits 1 from the shell's Process environment.
+    // Probed on disk, not with `systemctl cat`: that exits 1 from Process.
     "found=0",
     "for d in /usr/lib/systemd/user /etc/systemd/user \"${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user\"; do",
     "  [ -f \"$d/$unit\" ] && found=1",
@@ -300,8 +498,7 @@ BarWidget {
     "runtime=\"${XDG_RUNTIME_DIR:-/run/user/$(id -u)}\"",
     "dir=\"$runtime/systemd/user/$unit.d\"",
     "file=\"$dir/50-" + moduleName + ".conf\"",
-    // Versions before this wrote the drop-in here, where it outlives the
-    // plugin. Swept on every reconcile so an upgrade cleans up after itself.
+    // Swept every reconcile so an upgrade from <=1.0.1 cleans up after itself.
     "legacy=\"${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/$unit.d/50-" + moduleName + ".conf\"",
     "marker='# Managed by the " + moduleName + " Omarchy plugin'",
     "lock=\"$runtime/" + moduleName + ".crash-toggle.lock\"",
@@ -334,13 +531,11 @@ BarWidget {
     ].join("\n")
   }
 
-  // Settings changed mid-reconcile. The host injects `settings` after
-  // construction, so the Component.onCompleted run always sees defaults —
-  // queue the follow-up, dropping it would leave the drop-in unwritten.
+  // `settings` is injected after construction, so onCompleted sees defaults; queue.
   property bool crashTogglePending: false
 
   function reconcileCrashToasts() {
-    // The pattern goes in a quoted systemd Environment= value.
+    // Goes into a quoted systemd Environment= value.
     if (/["\n]/.test(configuredCrashIgnore)) {
       crashToggleError = "crashIgnore cannot contain quotes or newlines"
       return
@@ -431,19 +626,31 @@ BarWidget {
       anchors.fill: parent
       spacing: Style.spacing.sm
 
-      // Title and manual refresh, since the poll interval can be long.
       Item {
         width: parent.width
         implicitHeight: Math.max(title.implicitHeight, refreshButton.implicitHeight)
 
+        PanelActionButton {
+          id: backButton
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          visible: root.snapshotDomain !== ""
+          iconText: "󰅁"
+          tooltipText: "Back"
+          foreground: popup.foreground
+          fontFamily: popup.fontFamily
+          onClicked: root.closeSnapshots()
+        }
+
         Text {
           id: title
-          anchors.left: parent.left
+          anchors.left: backButton.visible ? backButton.right : parent.left
+          anchors.leftMargin: backButton.visible ? Style.spacing.xs : 0
           anchors.right: refreshButton.left
           anchors.rightMargin: Style.spacing.sm
           anchors.verticalCenter: parent.verticalCenter
           elide: Text.ElideRight
-          text: "Virtual machines"
+          text: root.snapshotDomain !== "" ? root.snapshotDomain : "Virtual machines"
           color: Color.popups.text
           font.family: popup.fontFamily
           font.pixelSize: Style.font.subtitle
@@ -458,13 +665,16 @@ BarWidget {
           foreground: popup.foreground
           fontFamily: popup.fontFamily
           enabled: !root.busy
-          onClicked: root.refresh()
+          onClicked: {
+            if (root.snapshotDomain !== "") root.fetchSnapshots(root.snapshotDomain)
+            else root.refresh()
+          }
         }
       }
 
-      // Whether libvirt answered, not which connection. URI on hover.
       Text {
         width: parent.width
+        visible: root.snapshotDomain === ""
         elide: Text.ElideRight
         text: root.connectionLabel
         color: root.connectionDown ? popup.urgent : Qt.darker(Color.popups.text, 1.4)
@@ -484,22 +694,31 @@ BarWidget {
         }
       }
 
+      Text {
+        width: parent.width
+        visible: root.snapshotDomain !== ""
+        elide: Text.ElideRight
+        text: "Snapshots"
+        color: Qt.darker(Color.popups.text, 1.4)
+        font.family: popup.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+
       PanelSeparator {
         foreground: popup.foreground
       }
 
-      // Capped: thirty VMs scroll rather than outgrow the screen.
       ListView {
         id: list
         width: parent.width
         height: Math.min(contentHeight, Style.space(300))
-        visible: root.domains.length > 0
+        visible: root.domains.length > 0 && root.snapshotDomain === ""
         clip: true
         interactive: contentHeight > height
         boundsBehavior: Flickable.StopAtBounds
         model: root.domains
 
-        delegate: Rectangle {
+        delegate: Item {
           id: row
           required property var modelData
 
@@ -508,111 +727,222 @@ BarWidget {
           readonly property bool isRunning: row.domainState === "running"
           readonly property bool isPaused: row.domainState === "paused"
           readonly property bool isOff: !isRunning && !isPaused
-          readonly property bool armed: root.armedDomain === row.domainName
+          readonly property bool isSaved: row.modelData.saved === true && row.isOff
+          readonly property bool armedForceOff: root.isArmed("destroy", row.domainName, "")
+          readonly property bool armedDiscard: root.isArmed("managedsave-remove", row.domainName, "")
+          readonly property bool working: root.busy && root.busyDomain === row.domainName
+          readonly property bool expanded: root.expandedDomain === row.domainName
 
           width: list.width
-          height: Style.space(30)
-          radius: Style.cornerRadius
-          color: rowMouse.containsMouse ? Style.hoverFill : "transparent"
+          height: header.height + (row.expanded ? detailPane.height + Style.spacing.xs : 0)
 
-          MouseArea {
-            id: rowMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            acceptedButtons: Qt.NoButton
-          }
-
+          // Hover fill belongs to the header, not the whole delegate.
           Rectangle {
-            id: dot
-            anchors.left: parent.left
-            anchors.leftMargin: Style.spacing.sm
-            anchors.verticalCenter: parent.verticalCenter
-            width: Style.space(8)
-            height: width
-            radius: width / 2
-            color: row.isRunning ? root.colorRunning : (row.isPaused ? root.colorPaused : root.colorStopped)
-          }
-
-          // The name is the console handle — only if the domain is up.
-          Text {
-            anchors.left: dot.right
-            anchors.leftMargin: Style.spacing.md
-            anchors.right: actions.left
-            anchors.rightMargin: Style.spacing.sm
-            anchors.verticalCenter: parent.verticalCenter
-            elide: Text.ElideRight
-            text: row.domainName
-            color: nameMouse.containsMouse ? Color.accent : Color.popups.text
-            opacity: row.isOff ? 0.6 : 1.0
-            font.family: popup.fontFamily
-            font.pixelSize: Style.font.body
-            font.underline: nameMouse.containsMouse
+            id: header
+            width: parent.width
+            height: Style.space(30)
+            radius: Style.cornerRadius
+            color: rowMouse.containsMouse ? Style.hoverFill : "transparent"
 
             MouseArea {
-              id: nameMouse
+              id: rowMouse
               anchors.fill: parent
               hoverEnabled: true
-              enabled: !row.isOff && root.configuredConsole !== ""
-              cursorShape: Qt.PointingHandCursor
-              onClicked: root.openConsole(row.domainName)
+              acceptedButtons: Qt.NoButton
+            }
 
-              PanelToolTip {
-                visible: nameMouse.containsMouse
-                text: "Open console"
+            Rectangle {
+              id: dot
+              anchors.left: parent.left
+              anchors.leftMargin: Style.spacing.sm
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(8)
+              height: width
+              radius: width / 2
+              // Hollow, not a fourth colour: a saved domain is still shut off.
+              color: row.isSaved
+                ? "transparent"
+                : (row.isRunning ? root.colorRunning : (row.isPaused ? root.colorPaused : root.colorStopped))
+              border.width: row.isSaved ? Math.max(1, Style.space(2)) : 0
+              border.color: root.colorStopped
+              visible: !row.working
+            }
+
+            Text {
+              anchors.centerIn: dot
+              visible: row.working
+              text: "󰇙"
+              color: Color.accent
+              font.family: popup.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Text {
+              anchors.left: dot.right
+              anchors.leftMargin: Style.spacing.md
+              anchors.right: actions.left
+              anchors.rightMargin: Style.spacing.sm
+              anchors.verticalCenter: parent.verticalCenter
+              elide: Text.ElideRight
+              text: row.domainName
+              color: nameMouse.containsMouse ? Color.accent : Color.popups.text
+              opacity: row.isOff ? 0.6 : 1.0
+              font.family: popup.fontFamily
+              font.pixelSize: Style.font.body
+              font.underline: nameMouse.containsMouse
+
+              MouseArea {
+                id: nameMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                enabled: !row.isOff && root.configuredConsole !== ""
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.openConsole(row.domainName)
+
+                PanelToolTip {
+                  visible: nameMouse.containsMouse
+                  text: "Open console"
+                  fontFamily: popup.fontFamily
+                }
+              }
+            }
+
+            Row {
+              id: actions
+              anchors.right: parent.right
+              anchors.rightMargin: Style.spacing.xs
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.spacing.xxs
+
+              PanelActionButton {
+                visible: row.isOff
+                iconText: row.isSaved ? "󰦛" : "󰐊"
+                tooltipText: row.isSaved ? "Restore" : "Start"
+                foreground: popup.foreground
                 fontFamily: popup.fontFamily
+                enabled: !root.busy
+                onClicked: root.runAction("start", row.domainName)
+              }
+
+              PanelActionButton {
+                visible: row.isPaused
+                iconText: "󰐊"
+                tooltipText: "Resume"
+                foreground: popup.foreground
+                fontFamily: popup.fontFamily
+                enabled: !root.busy
+                onClicked: root.runAction("resume", row.domainName)
+              }
+
+              PanelActionButton {
+                visible: row.isRunning
+                iconText: "󰓛"
+                tooltipText: "Shut down"
+                foreground: popup.foreground
+                fontFamily: popup.fontFamily
+                enabled: !root.busy
+                onClicked: root.runAction("shutdown", row.domainName)
+              }
+
+              PanelActionButton {
+                visible: !row.isOff
+                iconText: "󱐋"
+                tooltipText: row.armedForceOff ? "Click again to force off" : "Force off"
+                foreground: row.armedForceOff ? popup.urgent : popup.foreground
+                hoverColor: popup.urgent
+                bordered: row.armedForceOff
+                fontFamily: popup.fontFamily
+                enabled: !root.busy
+                onClicked: root.forceOff(row.domainName)
+              }
+
+              PanelActionButton {
+                iconText: row.expanded ? "󰅃" : "󰅀"
+                tooltipText: row.expanded ? "Less" : "More"
+                foreground: popup.foreground
+                fontFamily: popup.fontFamily
+                onClicked: root.expandedDomain = row.expanded ? "" : row.domainName
               }
             }
           }
 
-          Row {
-            id: actions
+          // ---- Expanded detail ----------------------------------------
+          Column {
+            id: detailPane
+            anchors.top: header.bottom
+            anchors.left: parent.left
             anchors.right: parent.right
+            anchors.leftMargin: Style.spacing.md
             anchors.rightMargin: Style.spacing.xs
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.spacing.xxs
+            visible: row.expanded
+            spacing: Style.spacing.xs
 
-            PanelActionButton {
-              visible: row.isOff
-              iconText: "󰐊"
-              tooltipText: "Start"
-              foreground: popup.foreground
-              fontFamily: popup.fontFamily
-              enabled: !root.busy
-              onClicked: root.runAction("start", row.domainName)
+            Text {
+              width: parent.width
+              visible: text !== ""
+              elide: Text.ElideRight
+              text: root.details[root.key(row.domainName)] || ""
+              color: Qt.darker(Color.popups.text, 1.4)
+              font.family: popup.fontFamily
+              font.pixelSize: Style.font.caption
             }
 
-            PanelActionButton {
-              visible: row.isPaused
-              iconText: "󰐊"
-              tooltipText: "Resume"
-              foreground: popup.foreground
-              fontFamily: popup.fontFamily
-              enabled: !root.busy
-              onClicked: root.runAction("resume", row.domainName)
-            }
+            Row {
+              spacing: Style.spacing.xxs
 
-            PanelActionButton {
-              visible: row.isRunning
-              iconText: "󰓛"
-              tooltipText: "Shut down"
-              foreground: popup.foreground
-              fontFamily: popup.fontFamily
-              enabled: !root.busy
-              onClicked: root.runAction("shutdown", row.domainName)
-            }
+              PanelActionButton {
+                visible: row.isRunning
+                iconText: "󰏤"
+                tooltipText: "Pause"
+                foreground: popup.foreground
+                fontFamily: popup.fontFamily
+                enabled: !root.busy
+                onClicked: root.runAction("suspend", row.domainName)
+              }
 
-            // A guest with no ACPI handler ignores `virsh shutdown`, so the
-            // hard path is the only one. Two clicks: it discards guest state.
-            PanelActionButton {
-              visible: !row.isOff
-              iconText: "󱐋"
-              tooltipText: row.armed ? "Click again to force off" : "Force off"
-              foreground: row.armed ? popup.urgent : popup.foreground
-              hoverColor: popup.urgent
-              bordered: row.armed
-              fontFamily: popup.fontFamily
-              enabled: !root.busy
-              onClicked: root.forceOff(row.domainName)
+              PanelActionButton {
+                visible: row.isRunning
+                iconText: "󰜉"
+                tooltipText: "Reboot"
+                foreground: popup.foreground
+                fontFamily: popup.fontFamily
+                enabled: !root.busy
+                onClicked: root.runAction("reboot", row.domainName)
+              }
+
+              PanelActionButton {
+                visible: !row.isOff
+                iconText: "󰆓"
+                tooltipText: "Save state"
+                foreground: popup.foreground
+                fontFamily: popup.fontFamily
+                enabled: !root.busy
+                onClicked: root.runAction("managedsave", row.domainName)
+              }
+
+              PanelActionButton {
+                visible: row.isSaved
+                iconText: "󰆴"
+                tooltipText: row.armedDiscard
+                  ? "Click again to discard the saved state"
+                  : "Discard saved state"
+                foreground: row.armedDiscard ? popup.urgent : popup.foreground
+                hoverColor: popup.urgent
+                bordered: row.armedDiscard
+                fontFamily: popup.fontFamily
+                enabled: !root.busy
+                onClicked: root.discardSaved(row.domainName)
+              }
+
+              PanelActionButton {
+                visible: root.configuredShowSnapshots
+                iconText: "󰄄"
+                tooltipText: "Snapshots"
+                foreground: popup.foreground
+                fontFamily: popup.fontFamily
+                enabled: !root.busy
+                onClicked: root.openSnapshots(row.domainName)
+              }
             }
           }
         }
@@ -620,13 +950,137 @@ BarWidget {
 
       Text {
         width: parent.width
-        visible: root.domains.length === 0 && root.lastError === ""
+        visible: root.domains.length === 0 && root.lastError === "" && root.snapshotDomain === ""
         wrapMode: Text.WordWrap
         text: "No domains defined on this connection."
         color: Color.popups.text
         opacity: 0.7
         font.family: popup.fontFamily
         font.pixelSize: Style.font.bodySmall
+      }
+
+      // ---- Snapshot view ------------------------------------------------
+      ListView {
+        id: snapshotView
+        width: parent.width
+        height: Math.min(contentHeight, Style.space(220))
+        visible: root.snapshotDomain !== "" && root.snapshots.length > 0
+        clip: true
+        interactive: contentHeight > height
+        boundsBehavior: Flickable.StopAtBounds
+        model: root.snapshots
+
+        delegate: Rectangle {
+          id: snapshotRow
+          required property var modelData
+
+          readonly property string snapshotName: String(snapshotRow.modelData)
+          readonly property bool armedRevert: root.isArmed("snapshot-revert", root.snapshotDomain, snapshotRow.snapshotName)
+          readonly property bool armedDelete: root.isArmed("snapshot-delete", root.snapshotDomain, snapshotRow.snapshotName)
+
+          width: snapshotView.width
+          height: Style.space(30)
+          radius: Style.cornerRadius
+          color: snapshotMouse.containsMouse ? Style.hoverFill : "transparent"
+
+          MouseArea {
+            id: snapshotMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            acceptedButtons: Qt.NoButton
+          }
+
+          Text {
+            anchors.left: parent.left
+            anchors.leftMargin: Style.spacing.sm
+            anchors.right: snapshotActions.left
+            anchors.rightMargin: Style.spacing.sm
+            anchors.verticalCenter: parent.verticalCenter
+            elide: Text.ElideRight
+            text: snapshotRow.snapshotName
+            color: Color.popups.text
+            font.family: popup.fontFamily
+            font.pixelSize: Style.font.body
+          }
+
+          Row {
+            id: snapshotActions
+            anchors.right: parent.right
+            anchors.rightMargin: Style.spacing.xs
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.spacing.xxs
+
+            PanelActionButton {
+              iconText: "󰑐"
+              tooltipText: snapshotRow.armedRevert ? "Click again to revert" : "Revert to this snapshot"
+              foreground: snapshotRow.armedRevert ? popup.urgent : popup.foreground
+              hoverColor: popup.urgent
+              bordered: snapshotRow.armedRevert
+              fontFamily: popup.fontFamily
+              enabled: !root.busy
+              onClicked: root.revertSnapshot(root.snapshotDomain, snapshotRow.snapshotName)
+            }
+
+            PanelActionButton {
+              iconText: "󰆴"
+              tooltipText: snapshotRow.armedDelete ? "Click again to delete" : "Delete snapshot"
+              foreground: snapshotRow.armedDelete ? popup.urgent : popup.foreground
+              hoverColor: popup.urgent
+              bordered: snapshotRow.armedDelete
+              fontFamily: popup.fontFamily
+              enabled: !root.busy
+              onClicked: root.deleteSnapshot(root.snapshotDomain, snapshotRow.snapshotName)
+            }
+          }
+        }
+      }
+
+      Text {
+        width: parent.width
+        visible: root.snapshotDomain !== "" && root.snapshots.length === 0
+        wrapMode: Text.WordWrap
+        text: "No snapshots for this domain."
+        color: Color.popups.text
+        opacity: 0.7
+        font.family: popup.fontFamily
+        font.pixelSize: Style.font.bodySmall
+      }
+
+      Item {
+        width: parent.width
+        visible: root.snapshotDomain !== ""
+        implicitHeight: Math.max(snapshotName.implicitHeight, createButton.implicitHeight)
+
+        TextField {
+          id: snapshotName
+          anchors.left: parent.left
+          anchors.right: createButton.left
+          anchors.rightMargin: Style.spacing.xs
+          anchors.verticalCenter: parent.verticalCenter
+          placeholderText: "New snapshot name"
+          enabled: !root.busy
+          foreground: popup.foreground
+          font.family: popup.fontFamily
+          onAccepted: {
+            root.createSnapshot(root.snapshotDomain, text)
+            text = ""
+          }
+        }
+
+        PanelActionButton {
+          id: createButton
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          iconText: "󰐕"
+          tooltipText: "Take snapshot"
+          foreground: popup.foreground
+          fontFamily: popup.fontFamily
+          enabled: !root.busy
+          onClicked: {
+            root.createSnapshot(root.snapshotDomain, snapshotName.text)
+            snapshotName.text = ""
+          }
+        }
       }
 
       Text {
@@ -642,7 +1096,7 @@ BarWidget {
       }
 
       PanelSeparator {
-        visible: root.configuredManager !== ""
+        visible: root.configuredManager !== "" && root.snapshotDomain === ""
         foreground: popup.foreground
       }
 
@@ -650,7 +1104,7 @@ BarWidget {
         width: parent.width
         height: Style.space(28)
         radius: Style.cornerRadius
-        visible: root.configuredManager !== ""
+        visible: root.configuredManager !== "" && root.snapshotDomain === ""
         color: managerMouse.containsMouse ? Style.hoverFill : "transparent"
 
         Text {
@@ -678,7 +1132,6 @@ BarWidget {
   }
 
   // ---- IPC -------------------------------------------------------------
-  // e.g. `omarchy-shell leyanora.libvirt toggle`, from scripts or keybinds.
   IpcHandler {
     target: "leyanora.libvirt"
 

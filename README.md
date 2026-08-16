@@ -3,6 +3,11 @@
 A libvirt frontend for the [Omarchy](https://omarchy.org/) bar. The bar item is
 a glyph, dimmed when nothing is running; the popup lists every domain on the
 connection with a state light, play/stop controls, and a click-to-open console.
+Expand a row for pause, reboot, save state and snapshots.
+
+It drives domains and nothing else: it never starts libvirt, never touches
+networks, and has no way to reach into a guest. Creating, cloning and deleting
+domains stay with virt-manager, which the popup's footer opens.
 
 ![The popup, listing a paused, a running and a shut off domain](preview.png)
 
@@ -21,6 +26,41 @@ click or scroll to refresh.
   and it disarms itself after four seconds.
 - **Clicking a domain's name** opens its console in `virt-viewer`, only while
   the domain is up.
+- **The chevron** expands the row for everything else.
+
+### In the expanded row
+
+The caption line is the domain's static configuration — vCPU count, memory and
+OS type, straight out of `virsh dominfo`.
+
+- **Pause** (`virsh suspend`) freezes a running domain; the play arrow resumes
+  it.
+- **Reboot** (`virsh reboot`) is an ACPI request, the same class as shut down —
+  a guest with no handler will ignore it.
+- **Save state** (`virsh managedsave`) writes the memory image out and stops
+  the domain. Its light goes **hollow** to say it is shut off but not blank,
+  and the play arrow becomes a **restore** arrow: starting it puts the guest
+  back exactly where it was.
+- **Discard saved state** throws that memory image away, so the domain boots
+  cold next time. Two clicks, like force off.
+- **Snapshots** opens the snapshot list for that domain.
+
+### Snapshots
+
+The back arrow returns to the domain list. Each snapshot has **revert** and
+**delete**; both take two clicks, because reverting throws away everything the
+domain has done since the snapshot was taken. The field at the bottom takes a
+snapshot — leave the name empty and libvirt names it after the epoch second.
+
+Typed names are tidied first: whitespace and `/` collapse to single hyphens and
+surrounding whitespace is dropped, so `my snap` is stored as `my-snap`. libvirt
+itself only refuses `/` and a leading `.`, but it will happily store
+`  my  snap  ` verbatim, and a name you cannot retype is a name you cannot
+easily revert to. A name that tidies away to nothing gets libvirt's automatic
+one. Existing snapshots are never renamed — only what you type is cleaned.
+
+Internal snapshots need **qcow2** disks. On a raw disk, or a domain with no
+disk at all, `virsh` refuses and the popup shows you why.
 
 Under the title: **Connected** when libvirt answered the last poll,
 **Disconnected** in red with the error below it when it did not. The URI is on
@@ -170,6 +210,9 @@ by the plugin id — not the display name:
 | `icon` | `󰒋` | Bar glyph |
 | `showCount` | `false` | Show the running count next to the glyph |
 | `confirmForceOff` | `true` | Require the second click on force off |
+| `confirmDiscardSaved` | `true` | Require the second click on discard saved state |
+| `confirmSnapshotRevert` | `true` | Require the second click on snapshot revert and delete |
+| `showSnapshots` | `true` | Show the snapshots button in the expanded row |
 | `console` | `virt-viewer --connect {uri} {name}` | Console command; `{uri}` and `{name}` are substituted shell-quoted |
 | `manager` | `virt-manager -c <uri>` | The popup's footer action; `""` hides the row |
 | `onRightClick` | same as `manager` | Right click on the bar item |
