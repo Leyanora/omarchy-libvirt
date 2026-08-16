@@ -4,7 +4,7 @@ A libvirt frontend for the [Omarchy](https://omarchy.org/) bar. The bar item is
 a glyph, dimmed when nothing is running; the popup lists every domain on the
 connection with a state light, play/stop controls, and a click-to-open console.
 
-![The popup, listing a running, a paused and two shut off domains](preview.png)
+![The popup, listing a paused, a running and a shut off domain](preview.png)
 
 ## Using it
 
