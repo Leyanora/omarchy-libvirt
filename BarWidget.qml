@@ -25,9 +25,11 @@ BarWidget {
   readonly property string configuredConsole: setting("console", "virt-viewer --connect {uri} {name}")
 
   // QEMU segfaults in SPICE teardown at VM shutdown, raising a bogus Omarchy
-  // "Process crashed" toast. Opt in to filter it via an omarchy-crash-watch
-  // drop-in. Off by default: this reconfigures another service.
-  readonly property bool configuredSuppressCrashToasts: setting("suppressCrashToasts", false)
+  // "Process crashed" toast. Filtered via an omarchy-crash-watch drop-in that
+  // the widget writes on every start. On by default — the toast is a direct
+  // consequence of the popup's own buttons — and the drop-in lives in the
+  // runtime dir, so it is gone once the plugin stops being loaded.
+  readonly property bool configuredSuppressCrashToasts: setting("suppressCrashToasts", true)
   readonly property string configuredCrashIgnore: setting("crashIgnore", "^qemu-system-")
 
   // The only hardcoded colors: a state light must read green/red, not themed.
@@ -274,7 +276,12 @@ BarWidget {
   // Reconciles one systemd drop-in against configuredSuppressCrashToasts.
   // Safe from a per-monitor widget because of three things below: an flock
   // (the copies race), a content compare (skips daemon-reload), and a marker
-  // line (the off branch can only delete our own file).
+  // line (the removal branches can only delete our own file).
+  //
+  // The drop-in goes in the *runtime* unit dir, not ~/.config. Omarchy has no
+  // uninstall hook for plugins, so a persistent file would outlive the plugin
+  // and keep silencing QEMU crashes forever. Runtime means the widget rewrites
+  // it every start and nothing survives the session it was written in.
   property string crashToggleError: ""
 
   // Built at call time, not bound: a bound script read from a change handler
@@ -292,26 +299,38 @@ BarWidget {
     "  [ -f \"$d/$unit\" ] && found=1",
     "done",
     "[ \"$found\" = 1 ] || exit 0",
-    "dir=\"${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/$unit.d\"",
+    "runtime=\"${XDG_RUNTIME_DIR:-/run/user/$(id -u)}\"",
+    "dir=\"$runtime/systemd/user/$unit.d\"",
     "file=\"$dir/50-" + moduleName + ".conf\"",
+    // Versions before this wrote the drop-in here, where it outlives the
+    // plugin. Swept on every reconcile so an upgrade cleans up after itself.
+    "legacy=\"${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/$unit.d/50-" + moduleName + ".conf\"",
     "marker='# Managed by the " + moduleName + " Omarchy plugin'",
-    "lock=\"${XDG_RUNTIME_DIR:-/tmp}/" + moduleName + ".crash-toggle.lock\"",
+    "lock=\"$runtime/" + moduleName + ".crash-toggle.lock\"",
     "exec 9>\"$lock\" || exit 0",
     "flock 9 || exit 0",
     "want=" + (configuredSuppressCrashToasts ? "1" : "0"),
     "pattern=" + shq(configuredCrashIgnore),
+    "changed=0",
+    "if [ -f \"$legacy\" ] && grep -qF \"$marker\" \"$legacy\"; then",
+    "  rm -f \"$legacy\" || exit 1",
+    "  rmdir \"$(dirname \"$legacy\")\" 2>/dev/null || true",
+    "  changed=1",
+    "fi",
     "if [ \"$want\" = 1 ]; then",
     "  desired=\"$marker",
     "[Service]",
     "Environment=\\\"OMARCHY_CRASH_IGNORE=$pattern\\\"\"",
-    "  [ -f \"$file\" ] && [ \"$(cat \"$file\")\" = \"$desired\" ] && exit 0",
-    "  mkdir -p \"$dir\" || exit 1",
-    "  printf '%s\\n' \"$desired\" >\"$file.tmp\" && mv \"$file.tmp\" \"$file\" || exit 1",
-    "else",
-    "  [ -f \"$file\" ] || exit 0",
-    "  grep -qF \"$marker\" \"$file\" || exit 0",
+    "  if [ ! -f \"$file\" ] || [ \"$(cat \"$file\")\" != \"$desired\" ]; then",
+    "    mkdir -p \"$dir\" || exit 1",
+    "    printf '%s\\n' \"$desired\" >\"$file.tmp\" && mv \"$file.tmp\" \"$file\" || exit 1",
+    "    changed=1",
+    "  fi",
+    "elif [ -f \"$file\" ] && grep -qF \"$marker\" \"$file\"; then",
     "  rm -f \"$file\" || exit 1",
+    "  changed=1",
     "fi",
+    "[ \"$changed\" = 1 ] || exit 0",
     "systemctl --user daemon-reload || exit 1",
     "systemctl --user restart \"$unit\" || exit 1"
     ].join("\n")

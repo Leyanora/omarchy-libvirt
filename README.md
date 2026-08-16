@@ -19,9 +19,9 @@ connection with a state light, play/stop controls, and a click-to-open console.
 Left click the bar item for the popup, right click to open virt-manager, middle
 click or scroll to refresh.
 
-Optionally, it can also stop Omarchy announcing the QEMU segfault that stopping
-a VM provokes — off by default, see
-[Silencing the shutdown crash toast](#silencing-the-shutdown-crash-toast).
+It also stops Omarchy announcing the QEMU segfault that stopping a VM provokes.
+That is on by default and leaves nothing behind when you remove the plugin —
+see [Silencing the shutdown crash toast](#silencing-the-shutdown-crash-toast).
 
 ## Prerequisites
 
@@ -119,27 +119,40 @@ upstream bug with no consequence beyond the toast.
 where you press the button that triggers it. Every ■ and 󱐋 in the popup ends
 in libvirt SIGTERMing QEMU, so the toast is a direct consequence of using the
 widget, and the widget is where you would go looking to make it stop. The
-filter it writes is Omarchy's own supported one — nothing is patched, nothing
-is monkey-patched, and the whole change is a single file that goes away when
-you turn the setting off.
+filter it writes is Omarchy's own supported one — nothing is patched and
+nothing is monkey-patched.
 
-```json
-{ "id": "leyanora.libvirt", "suppressCrashToasts": true }
+So it is **on by default**. Whenever the widget starts it writes a drop-in at
+
+```
+$XDG_RUNTIME_DIR/systemd/user/omarchy-crash-watch.service.d/50-leyanora.libvirt.conf
 ```
 
-With that set, the widget keeps a drop-in at
-`~/.config/systemd/user/omarchy-crash-watch.service.d/50-leyanora.libvirt.conf`
-that sets `OMARCHY_CRASH_IGNORE` for Omarchy's crash watcher, and reloads it.
-Setting the key back to `false` removes the file again.
+that sets `OMARCHY_CRASH_IGNORE` for Omarchy's crash watcher, then reloads and
+restarts it. An unchanged file is left alone, so the reload only happens when
+something actually differs.
 
-It is **off by default**, because reconfiguring another service is not
-something a bar widget should do uninvited. Two things worth knowing before
-turning it on:
+That path is the runtime unit directory, not `~/.config` — deliberately.
+Omarchy has no uninstall hook for plugins, so a drop-in under `~/.config`
+would outlive the plugin and go on silencing QEMU crashes for a system that no
+longer has the widget on it. In the runtime directory it is rewritten on every
+start and cannot survive a plugin that is no longer there: remove the widget
+and the filter is gone at the next login, with no file left to find. (Upgrading
+from an earlier version also sweeps the old `~/.config` drop-in away.)
+
+Turn it off with:
+
+```json
+{ "id": "leyanora.libvirt", "suppressCrashToasts": false }
+```
+
+which deletes the drop-in immediately. Two things worth knowing:
 
 - The watcher filters on the executable name only, so this also silences a
   QEMU crash that happens *mid-run* — a VM dying under you goes unannounced.
+  That is the reason to consider turning it off.
 - The widget will only ever delete a drop-in carrying its own marker comment,
-  so a file you wrote by hand at that path is left alone.
+  so a file you wrote by hand at either path is left alone.
 
 `omarchy-toggle-crash-capture` remains the way to turn crash announcements off
 wholesale, if you would rather not filter per-binary.
@@ -174,7 +187,7 @@ entry is keyed by the plugin id, `leyanora.libvirt` — not by the display name:
 | `colorRunning` | `#3fb950` | State light, running |
 | `colorPaused` | `#d29922` | State light, paused |
 | `colorStopped` | `#f85149` | State light, shut off |
-| `suppressCrashToasts` | `false` | Filter QEMU crash toasts, see below |
+| `suppressCrashToasts` | `true` | Filter QEMU crash toasts, see [above](#silencing-the-shutdown-crash-toast) |
 | `crashIgnore` | `^qemu-system-` | Regex of executable names to filter when the above is on |
 
 `allowMultiple` is on, so a second entry with `"uri": "qemu:///system"` gives
@@ -204,23 +217,6 @@ click it, not instantly.
 
 The widget is instantiated once per monitor, so the poll runs per bar surface
 and IPC refreshes go through `broadcast()`.
-
-## Development
-
-```bash
-bin/check        # validate the manifest
-bin/dev-link     # symlink this repo into ~/.config/omarchy/plugins/
-bin/dev-unlink   # remove it
-```
-
-Edit `BarWidget.qml` and save; the shell reloads plugin code on its own. If a
-change does not land, `omarchy restart shell`. QML errors are silent in the bar
-and loud in `qs -p /usr/share/omarchy/shell log`.
-
-The shell API this widget is built on lives in `/usr/share/omarchy/shell/` —
-`Ui/` for the components, `Commons/` for the `Color` and `Style` singletons,
-`plugins/` for the first-party widgets worth reading. Read it freely, never
-edit it.
 
 ## License
 
