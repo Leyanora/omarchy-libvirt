@@ -1,4 +1,4 @@
-# Omarchy libvirt widget
+# Omarchy libvirt
 
 A libvirt frontend for the [Omarchy](https://omarchy.org/) bar. The bar item is
 a glyph, dimmed when nothing is running; the popup lists every domain on the
@@ -8,6 +8,8 @@ Expand a row for pause, reboot, save state and snapshots.
 It drives domains and nothing else: it never starts libvirt, never touches
 networks, and has no way to reach into a guest. Creating, cloning and deleting
 domains stay with virt-manager, which the popup's footer opens.
+
+Claude code was heavily involved in the creation of this widget.
 
 ![The popup, listing a paused, a running and a shut off domain](preview.png)
 
