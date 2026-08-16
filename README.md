@@ -6,22 +6,29 @@ connection with a state light, play/stop controls, and a click-to-open console.
 
 ![The popup, listing a running, a paused and two shut off domains](preview.png)
 
-- **Green** running, **amber** paused, **red** shut off. A row only shows the
-  buttons its state allows.
-- **▶** starts a shut off domain, or resumes a paused one.
-- **■** is `virsh shutdown` — a polite ACPI request the guest can ignore.
-- **󱐋** is `virsh destroy`. It cuts power and loses unwritten guest state, so
-  it takes two clicks: the first arms it, the second does it, and it disarms
-  itself after four seconds. A shut off domain has nothing to force off.
-- **Clicking a domain's name** opens its console in `virt-viewer` — only while
-  the domain is up, since a shut off one has no console to attach to.
+## Using it
 
 Left click the bar item for the popup, right click to open virt-manager, middle
 click or scroll to refresh.
 
-It also stops Omarchy announcing the QEMU segfault that stopping a VM provokes.
-That is on by default and leaves nothing behind when you remove the plugin —
-see [Silencing the shutdown crash toast](#silencing-the-shutdown-crash-toast).
+- **Green** running, **amber** paused, **red** shut off. A row only shows the
+  buttons its state allows.
+- **The play arrow** starts a shut off domain, or resumes a paused one.
+- **The stop square** is `virsh shutdown` — a polite ACPI request the guest can
+  ignore.
+- **The lightning bolt** is `virsh destroy`. It cuts power and loses unwritten
+  guest state, so it takes two clicks: the first arms it, the second does it,
+  and it disarms itself after four seconds.
+- **Clicking a domain's name** opens its console in `virt-viewer`, only while
+  the domain is up.
+
+Under the title: **Connected** when libvirt answered the last poll,
+**Disconnected** in red with the error below it when it did not. The URI is on
+hover. The widget only reads and drives domains — it never starts libvirt, so a
+dead connection is yours to bring up from a terminal.
+
+`virsh shutdown` and friends return when the request is queued, not when the
+guest acts on it, so expect a row to change state a beat after you click.
 
 ## Prerequisites
 
@@ -31,51 +38,32 @@ sudo pacman -S qemu-full libvirt virt-manager virt-viewer edk2-ovmf
 
 | Package | Why |
 |---|---|
-| `libvirt` | **Required.** Provides `virsh`, which is the whole backend — the widget shells out to it and reads nothing else |
+| `libvirt` | **Required.** Provides `virsh`, the entire backend |
 | `qemu-full` | The hypervisor, plus every guest architecture and its firmware |
-| `virt-viewer` | **Required for consoles.** `virt-viewer` is what clicking a domain name opens |
-| `virt-manager` | Only the popup's footer button. Skip it and set `"manager": ""` to hide that row |
-| `edk2-ovmf` | UEFI firmware for guests. Optional, but a modern guest usually wants it over SeaBIOS |
+| `virt-viewer` | **Required for consoles** — it is what clicking a domain name opens |
+| `virt-manager` | Only the popup's footer button. Set `"manager": ""` to hide that row |
+| `edk2-ovmf` | UEFI firmware for guests. Optional, but a modern guest usually wants it |
 
-KVM itself needs no group membership on Arch — `/dev/kvm` is world-writable by
-udev rule. Check with `test -w /dev/kvm && echo ok`.
+KVM needs no group membership on Arch — `/dev/kvm` is world-writable by udev
+rule. Check with `test -w /dev/kvm && echo ok`.
 
-Then pick a connection. The widget's default, `qemu:///session`, is the one
-that needs no further setup.
+The default connection, `qemu:///session`, needs no further setup: `virsh`
+spawns `virtqemud` under your own user on first contact, guests get QEMU
+user-mode networking, and definitions live in `~/.config/libvirt/`. The
+trade-off is no inbound connections to guests and no networking between them.
 
-### `qemu:///session` — per-user, no root
-
-Nothing to configure and nothing to start. `virsh` spawns
-`virtqemud --timeout=120` under your own user on first contact, and it exits
-when idle. Guests get QEMU user-mode networking (`<interface type='user'>`) —
-no bridge, no `dnsmasq`, no NAT to set up — and domain and pool definitions
-live under `~/.config/libvirt/`. The trade-off is no inbound connections to
-guests and no networking between them.
-
-```bash
-virsh -c qemu:///session list --all      # should print a header, not an error
-```
-
-### `qemu:///system` — host-wide, needs root once
+For host-wide `qemu:///system` instead:
 
 ```bash
 sudo usermod -aG libvirt $USER           # then log out and back in
 sudo pacman -S dnsmasq                   # the default NAT network needs it
 sudo systemctl enable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket
-sudo virsh net-autostart default
-sudo virsh net-start default
+sudo virsh net-autostart default && sudo virsh net-start default
 ```
 
-`dnsmasq` is only an *optional* dependency of `libvirt`, so pacman will not
-pull it in — but without it the `default` NAT network cannot hand out DHCP and
-refuses to start. Hosts still shipping the monolithic daemon use
-`libvirtd.socket` in place of the three split units above.
-
-Point the widget at it in `~/.config/omarchy/shell.json`:
-
-```json
-{ "id": "leyanora.libvirt", "uri": "qemu:///system" }
-```
+`dnsmasq` is only an optional dependency of `libvirt`, but without it the
+`default` NAT network cannot hand out DHCP and refuses to start. Hosts on the
+monolithic daemon use `libvirtd.socket` in place of the three units above.
 
 ## Install
 
@@ -87,58 +75,59 @@ The widget expects the connection to work without a password prompt. If
 `virsh -c <uri> list --all` works in a terminal it works here; if it does not,
 the popup shows you the same error.
 
-## The connection line
+## Uninstall
 
-Under the title, in place of the URI: **Connected** when libvirt answered the
-last poll, **Disconnected** in red when it did not — with the error below it.
-The URI itself is on hover, which matters when two instances sit in the bar.
+```bash
+omarchy plugin remove leyanora.libvirt
+```
 
-The widget only reads and drives domains; it never starts libvirt itself. If it
-says Disconnected, bring the connection up from a terminal — `systemctl start
-virtqemud.socket virtnetworkd.socket virtstoraged.socket` for `qemu:///system`,
-and `virsh -c qemu:///session list` for a session URI, which spawns its own
-`virtqemud`. Inactive networks are `virsh net-start <name>`.
+That is the whole thing. It asks once (`--yes` skips), unloads the widget,
+deletes `~/.config/omarchy/plugins/leyanora.libvirt`, and drops the widget's
+entry — and with it every setting you put there — out of
+`~/.config/omarchy/shell.json`.
+
+Nothing of yours is touched: the widget only ever shells out to `virsh`, so
+your domains, disks, networks and libvirt config are exactly as you left them.
+The packages above stay installed.
+
+The one thing that outlives the command is the crash-toast drop-in, and only
+until you next log in — it lives in `$XDG_RUNTIME_DIR`, which is wiped with the
+session. To be rid of it right now, either set `"suppressCrashToasts": false`
+*before* removing the plugin, which deletes it on the spot, or clean up by hand
+afterwards:
+
+```bash
+rm -f "$XDG_RUNTIME_DIR/systemd/user/omarchy-crash-watch.service.d/50-leyanora.libvirt.conf"
+systemctl --user daemon-reload
+systemctl --user restart omarchy-crash-watch.service
+```
 
 ## Silencing the shutdown crash toast
 
 Stopping a VM tends to raise an Omarchy "Process crashed: qemu-system-x86_64"
 notification. That is not this plugin, and not `virt-viewer` either: libvirt
 SIGTERMs QEMU, and QEMU segfaults inside its own SPICE teardown on the way out.
-The domain log shows the whole story:
+The guest has already stopped by then, so nothing is lost — it is an upstream
+bug with no consequence beyond the toast. But you press the button that
+triggers it here, so this is where it gets handled.
 
-```
-qemu-system-x86_64: terminating on signal 15 from pid … (/usr/bin/virtqemud)
-qemu-system-x86_64: warning: Spice: …spice_server_remove_interface: VD_INTERFACE_REMOVING unsupported
-shutting down, reason=shutdown
-```
-
-The guest has already stopped by then, so nothing is lost — it is a real
-upstream bug with no consequence beyond the toast.
-
-**Why handle it here, in a plugin that does not cause it?** Because this is
-where you press the button that triggers it. Every ■ and 󱐋 in the popup ends
-in libvirt SIGTERMing QEMU, so the toast is a direct consequence of using the
-widget, and the widget is where you would go looking to make it stop. The
-filter it writes is Omarchy's own supported one — nothing is patched and
-nothing is monkey-patched.
-
-So it is **on by default**. Whenever the widget starts it writes a drop-in at
+It is therefore **on by default**. Whenever the widget starts it writes a
+drop-in at
 
 ```
 $XDG_RUNTIME_DIR/systemd/user/omarchy-crash-watch.service.d/50-leyanora.libvirt.conf
 ```
 
-that sets `OMARCHY_CRASH_IGNORE` for Omarchy's crash watcher, then reloads and
-restarts it. An unchanged file is left alone, so the reload only happens when
-something actually differs.
+that sets `OMARCHY_CRASH_IGNORE` for Omarchy's crash watcher — the supported
+filter, nothing patched — then reloads and restarts it. An unchanged file is
+left alone.
 
-That path is the runtime unit directory, not `~/.config` — deliberately.
-Omarchy has no uninstall hook for plugins, so a drop-in under `~/.config`
-would outlive the plugin and go on silencing QEMU crashes for a system that no
-longer has the widget on it. In the runtime directory it is rewritten on every
-start and cannot survive a plugin that is no longer there: remove the widget
-and the filter is gone at the next login, with no file left to find. (Upgrading
-from an earlier version also sweeps the old `~/.config` drop-in away.)
+That path is the runtime unit directory, not `~/.config`, deliberately: Omarchy
+has no uninstall hook for plugins, so a drop-in under `~/.config` would outlive
+the plugin and go on silencing QEMU crashes on a system that no longer has the
+widget. In the runtime directory it is rewritten on every start and gone at the
+next login. (Upgrading from an earlier version also sweeps the old `~/.config`
+drop-in away.)
 
 Turn it off with:
 
@@ -146,21 +135,21 @@ Turn it off with:
 { "id": "leyanora.libvirt", "suppressCrashToasts": false }
 ```
 
-which deletes the drop-in immediately. Two things worth knowing:
+Two things worth knowing:
 
-- The watcher filters on the executable name only, so this also silences a
-  QEMU crash that happens *mid-run* — a VM dying under you goes unannounced.
-  That is the reason to consider turning it off.
-- The widget will only ever delete a drop-in carrying its own marker comment,
-  so a file you wrote by hand at either path is left alone.
+- The watcher filters on the executable name only, so this also silences a QEMU
+  crash that happens *mid-run* — a VM dying under you goes unannounced. That is
+  the reason to consider turning it off.
+- The widget will only ever delete a drop-in carrying its own marker comment, so
+  a file you wrote by hand at either path is left alone.
 
 `omarchy-toggle-crash-capture` remains the way to turn crash announcements off
 wholesale, if you would rather not filter per-binary.
 
 ## Settings
 
-Every key goes in the widget's entry in `~/.config/omarchy/shell.json`. The
-entry is keyed by the plugin id, `leyanora.libvirt` — not by the display name:
+Every key goes in the widget's entry in `~/.config/omarchy/shell.json`, keyed
+by the plugin id — not the display name:
 
 ```json
 {
@@ -190,9 +179,6 @@ entry is keyed by the plugin id, `leyanora.libvirt` — not by the display name:
 | `suppressCrashToasts` | `true` | Filter QEMU crash toasts, see [above](#silencing-the-shutdown-crash-toast) |
 | `crashIgnore` | `^qemu-system-` | Regex of executable names to filter when the above is on |
 
-`allowMultiple` is on, so a second entry with `"uri": "qemu:///system"` gives
-you both connections side by side in the bar.
-
 ## IPC
 
 ```bash
@@ -201,22 +187,6 @@ omarchy-shell leyanora.libvirt refresh    # re-poll on every monitor
 ```
 
 Bind either in `~/.config/hypr/bindings.lua`.
-
-## How it reads state
-
-Three `virsh` calls per poll regardless of how many domains exist — every
-domain, the running ones, the paused ones — each line tagged in column 0 so a
-domain name containing spaces survives parsing. Everything else is a
-`virsh <verb> <domain>` with the name shell-quoted.
-
-One action runs at a time — the buttons disable while it does. `virsh shutdown`
-and friends return as soon as the request is queued rather than when the guest
-acts on it, so after every action the widget re-polls three times over the next
-few seconds instead of once; expect a row to change state a beat after you
-click it, not instantly.
-
-The widget is instantiated once per monitor, so the poll runs per bar surface
-and IPC refreshes go through `broadcast()`.
 
 ## License
 
