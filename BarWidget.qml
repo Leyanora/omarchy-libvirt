@@ -104,12 +104,6 @@ BarWidget {
     return found
   }
 
-  function stateRank(state) {
-    if (state === "running") return 0
-    if (state === "paused") return 1
-    return 2
-  }
-
   function refresh() {
     poll.running = false
     poll.running = true
@@ -165,9 +159,12 @@ BarWidget {
         domainState: running[key(name)] ? "running" : (paused[key(name)] ? "paused" : "shut off")
       })
     }
+    // By name only. Ranking by state first meant a domain jumped position the
+    // moment it started or stopped — including under the cursor, mid-click, on
+    // a poll the user did not ask for. Order now depends on which domains are
+    // defined, never on what they are doing.
     list.sort(function (a, b) {
-      var byState = root.stateRank(a.domainState) - root.stateRank(b.domainState)
-      return byState !== 0 ? byState : a.name.localeCompare(b.name)
+      return a.name.localeCompare(b.name)
     })
 
     domains = list
@@ -390,6 +387,7 @@ BarWidget {
     bar: root.bar
     text: root.showLabel ? (root.configuredIcon + "  " + root.displayText) : root.configuredIcon
     active: root.popupOpen
+    useActiveColor: false
     dimmed: root.runningCount === 0
     tooltipText: root.summary
     fixedWidth: root.vertical ? root.barSize : -1
