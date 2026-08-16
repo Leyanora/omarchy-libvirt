@@ -38,7 +38,8 @@ BarWidget {
   readonly property color colorStopped: setting("colorStopped", "#f85149")
 
   // ---- State ----------------------------------------------------------
-  // domains is [{ name, domainState }], sorted running → paused → shut off.
+  // domains is [{ name, domainState }], sorted by name — never by state, so a
+  // row does not move when the domain it names starts or stops.
   property var domains: []
 
   property string lastError: ""
