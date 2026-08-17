@@ -233,7 +233,7 @@ by the plugin id — not the display name:
 | `colorPaused` | `#d29922` | State light, paused |
 | `colorStopped` | `#f85149` | State light, shut off |
 | `suppressCrashToasts` | `false` | Filter QEMU crash toasts, see [above](#silencing-the-shutdown-crash-toast). The one key the popup can also write, from its cogwheel |
-| `crashIgnore` | `^qemu-system-` | Regex of executable names to filter when the above is on |
+| `crashIgnore` | `^qemu-system-` | Regex of executable names to filter when the above is on. A `%` is passed through literally; a value containing a quote or newline, or ending in a backslash, is refused with an error in the popup, because it cannot survive the systemd drop-in intact |
 
 ## IPC
 

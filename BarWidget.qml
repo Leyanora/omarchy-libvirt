@@ -51,8 +51,7 @@ BarWidget {
   property string snapshotDomain: ""
   property bool settingsOpen: false
 
-  // Neither sub-view. The popup is too narrow to show two at once, so every
-  // list-view element gates on this rather than testing the sub-views itself.
+  // Neither sub-view: list-view elements gate on this, not on the sub-views.
   readonly property bool listView: snapshotDomain === "" && !settingsOpen
 
   readonly property int runningCount: countState("running")
@@ -96,7 +95,8 @@ BarWidget {
   }
 
   // ---- Helpers ---------------------------------------------------------
-  // Domain and snapshot names are user-chosen: shq() for shells, key() for lookups.
+  // Names reach virsh as argv; shq() is only for the two generated scripts and
+  // the console/manager templates the host runs through its own shell.
   function shq(value) {
     return "'" + String(value).replace(/'/g, "'\\''") + "'"
   }
@@ -236,9 +236,10 @@ BarWidget {
       fetchDetail(expandedDomain)
   }
 
+  // No `-l`, no BASH_ENV: a startup file's output would parse as a poll record.
   Process {
     id: poll
-    command: ["bash", "-lc", root.pollScript]
+    command: ["env", "-u", "BASH_ENV", "bash", "-c", root.pollScript]
     stdout: StdioCollector {
       onStreamFinished: root.applyPoll(text)
     }
@@ -254,24 +255,26 @@ BarWidget {
 
   // ---- Actions ---------------------------------------------------------
   // One at a time. virsh returns when queued, not when the guest acts — hence settle.
-  property string actionScript: ""
+  // argv, never a shell string: a name never becomes shell syntax to begin with.
+  property var actionCommand: []
+
+  // Allowlist: runAction builds argv from nothing else.
+  readonly property var actionVerbs: [
+    "start", "resume", "shutdown", "destroy",
+    "suspend", "reboot", "managedsave", "managedsave-remove"
+  ]
 
   function runAction(verb, domain) {
-    if (busy || domain === "") return
-    actionError = ""
-    clearArm()
-    actionScript = "virsh -c " + shq(configuredUri) + " " + verb + " " + shq(domain) + " >/dev/null"
-    busy = true
-    busyDomain = domain
-    action.running = true
+    if (domain === "" || actionVerbs.indexOf(verb) < 0) return
+    runCommand(["virsh", "-c", configuredUri, verb, domain], domain)
   }
 
-  // Prebuilt command for the verbs that need flags; never sourced from a setting.
-  function runScript(script, domain) {
+  // Prebuilt argv for the verbs that need flags; never sourced from a setting.
+  function runCommand(argv, domain) {
     if (busy) return
     actionError = ""
     clearArm()
-    actionScript = script
+    actionCommand = argv
     busy = true
     busyDomain = domain
     action.running = true
@@ -298,7 +301,8 @@ BarWidget {
 
   Process {
     id: action
-    command: ["bash", "-lc", root.actionScript]
+    command: root.actionCommand
+    stdout: StdioCollector {}  // dropped; the popup shows state, not chatter
     stderr: StdioCollector {
       // virsh banners the useful line last.
       onStreamFinished: {
@@ -340,18 +344,13 @@ BarWidget {
 
   // ---- Domain detail ---------------------------------------------------
   // Own Process, deliberately not gated on `busy`: a read must not queue behind an action.
-  property string detailScript: ""
+  property var detailCommand: []
   property string detailDomain: ""
-
-  function buildDetailScript(domain) {
-    return "virsh -c " + shq(configuredUri) + " -q dominfo " + shq(domain)
-      + " 2>/dev/null | sed 's/^/I /'"
-  }
 
   function fetchDetail(domain) {
     if (domain === "" || detail.running) return
     detailDomain = domain
-    detailScript = buildDetailScript(domain)
+    detailCommand = ["virsh", "-c", configuredUri, "-q", "dominfo", domain]
     detail.running = true
   }
 
@@ -363,10 +362,10 @@ BarWidget {
     var memory = ""
     var osType = ""
 
+    // No tag to strip: with argv, every line here is virsh's own.
     var lines = String(text || "").split("\n")
     for (var i = 0; i < lines.length; i++) {
-      if (lines[i].charAt(0) !== "I") continue
-      var field = lines[i].substring(2)
+      var field = lines[i]
       var split = field.indexOf(":")
       if (split < 0) continue
       var label = field.substring(0, split).trim()
@@ -393,10 +392,11 @@ BarWidget {
 
   Process {
     id: detail
-    command: ["bash", "-lc", root.detailScript]
+    command: root.detailCommand
     stdout: StdioCollector {
       onStreamFinished: root.applyDetail(text)
     }
+    stderr: StdioCollector {}  // a failed read blanks the caption, nothing louder
     onExited: function (exitCode, exitStatus) {
       // A row expanded while this fetch was in flight; catch it up.
       if (root.expandedDomain !== "" && root.details[root.key(root.expandedDomain)] === undefined)
@@ -410,32 +410,32 @@ BarWidget {
   }
 
   // ---- Snapshots -------------------------------------------------------
-  // `--name` prints one per line so names with spaces survive. Never exits nonzero.
   property var snapshots: []
-  property string snapshotScript: ""
+  property var snapshotCommand: []
 
   function fetchSnapshots(domain) {
     if (domain === "") return
-    snapshotScript = "virsh -c " + shq(configuredUri) + " -q snapshot-list "
-      + shq(domain) + " --name 2>/dev/null | sed '/^$/d;s/^/N /'"
+    snapshotCommand = ["virsh", "-c", configuredUri, "-q", "snapshot-list", domain, "--name"]
     snapshotList.running = false
     snapshotList.running = true
   }
 
+  // Empty lines dropped, nothing else: revert/delete must match libvirt exactly.
   function applySnapshots(text) {
     var found = []
     var lines = String(text || "").split("\n")
     for (var i = 0; i < lines.length; i++)
-      if (lines[i].charAt(0) === "N") found.push(lines[i].substring(2))
+      if (lines[i] !== "") found.push(lines[i])
     snapshots = found
   }
 
   Process {
     id: snapshotList
-    command: ["bash", "-lc", root.snapshotScript]
+    command: root.snapshotCommand
     stdout: StdioCollector {
       onStreamFinished: root.applySnapshots(text)
     }
+    stderr: StdioCollector {}
   }
 
   // Driven by the property, not openSnapshots(), so no route in leaves a stale list.
@@ -465,22 +465,20 @@ BarWidget {
 
   function createSnapshot(domain, name) {
     var clean = cleanSnapshotName(name)
-    var command = "virsh -c " + shq(configuredUri) + " snapshot-create-as --domain " + shq(domain)
+    var argv = ["virsh", "-c", configuredUri, "snapshot-create-as", "--domain", domain]
     // Empty, or sanitised away to nothing, gets libvirt's automatic name.
-    if (clean !== "") command += " --name " + shq(clean)
-    runScript(command + " >/dev/null", domain)
+    if (clean !== "") argv = argv.concat(["--name", clean])
+    runCommand(argv, domain)
   }
 
   function revertSnapshot(domain, name) {
     if (confirmed("snapshot-revert", domain, name, configuredConfirmSnapshotRevert))
-      runScript("virsh -c " + shq(configuredUri) + " snapshot-revert " + shq(domain)
-        + " " + shq(name) + " >/dev/null", domain)
+      runCommand(["virsh", "-c", configuredUri, "snapshot-revert", domain, name], domain)
   }
 
   function deleteSnapshot(domain, name) {
     if (confirmed("snapshot-delete", domain, name, configuredConfirmSnapshotRevert))
-      runScript("virsh -c " + shq(configuredUri) + " snapshot-delete " + shq(domain)
-        + " " + shq(name) + " >/dev/null", domain)
+      runCommand(["virsh", "-c", configuredUri, "snapshot-delete", domain, name], domain)
   }
 
   // ---- Settings view ---------------------------------------------------
@@ -496,32 +494,27 @@ BarWidget {
     settingsOpen = false
   }
 
-  // The one place this widget writes user config. updateEntryInline replaces
-  // the entry wholesale, so the existing keys have to be merged in or every
-  // other setting on it is dropped.
+  // The only write to user config. updateEntryInline replaces the entry
+  // wholesale, so the merge below is mandatory or every other key is lost.
   function persistSetting(name, value) {
     var entry = { id: moduleName }
     for (var existing in settings) if (existing !== "id") entry[existing] = settings[existing]
     entry[name] = value
 
-    // Applied locally first so the switch throws on the click itself; the
-    // shell.json write comes back through the bar as the same value. That
-    // assignment is also what re-fires the configured* bindings, so a setting
-    // with a change handler — suppressCrashToasts has one — reconciles itself.
+    // Local first: throws the switch now, and re-fires the configured* bindings.
     settings = entry
     if (bar && bar.shell && typeof bar.shell.updateEntryInline === "function") {
       settingsError = ""
       bar.shell.updateEntryInline(moduleName, entry)
     } else {
-      // Degrades to session-only rather than failing silently.
       settingsError = "could not save: the shell did not expose updateEntryInline"
     }
   }
 
   // ---- Crash toast suppression ----------------------------------------
-  // Four constraints, all load-bearing: flock (one widget per monitor, they race),
-  // content compare (skips daemon-reload), marker line (only ever deletes our own
-  // file), runtime dir not ~/.config (no uninstall hook, so it must not outlive us).
+  // Four load-bearing constraints: flock (the per-monitor copies race), content
+  // compare (skips daemon-reload), marker line (never deletes a hand-written
+  // file), runtime dir not ~/.config (no uninstall hook, so it cannot outlive us).
   property string crashToggleError: ""
 
   // Built at call time, never bound: a handler runs before siblings re-evaluate.
@@ -530,6 +523,7 @@ BarWidget {
   function buildCrashToggleScript() {
     return [
     "set -u",
+    "umask 077",  // owner-only, rather than leaning on the runtime dir's 0700
     "unit=omarchy-crash-watch.service",
     // Probed on disk, not with `systemctl cat`: that exits 1 from Process.
     "found=0",
@@ -547,7 +541,8 @@ BarWidget {
     "exec 9>\"$lock\" || exit 0",
     "flock 9 || exit 0",
     "want=" + (configuredSuppressCrashToasts ? "1" : "0"),
-    "pattern=" + shq(configuredCrashIgnore),
+    // `%` starts a systemd specifier in Environment=; `%%` is the literal.
+    "pattern=" + shq(String(configuredCrashIgnore).replace(/%/g, "%%")),
     "changed=0",
     "if [ -f \"$legacy\" ] && grep -qF \"$marker\" \"$legacy\"; then",
     "  rm -f \"$legacy\" || exit 1",
@@ -577,9 +572,9 @@ BarWidget {
   property bool crashTogglePending: false
 
   function reconcileCrashToasts() {
-    // Goes into a quoted systemd Environment= value.
-    if (/["\n]/.test(configuredCrashIgnore)) {
-      crashToggleError = "crashIgnore cannot contain quotes or newlines"
+    // Quote, newline or trailing backslash all break the Environment= value.
+    if (/["\n]|\\$/.test(configuredCrashIgnore)) {
+      crashToggleError = "crashIgnore cannot contain quotes or newlines, or end in a backslash"
       return
     }
     crashToggleError = ""
@@ -598,7 +593,7 @@ BarWidget {
 
   Process {
     id: crashToggle
-    command: ["bash", "-lc", root.crashToggleScript]
+    command: ["env", "-u", "BASH_ENV", "bash", "-c", root.crashToggleScript]
     stderr: StdioCollector {
       onStreamFinished: {
         var message = String(text || "").trim()
@@ -656,8 +651,7 @@ BarWidget {
     bar: root.bar
     owner: root
     open: root.popupOpen
-    // Wider in the settings view: Toggle elides its label and never wraps it,
-    // and a setting worth a sentence does not fit the list view's width.
+    // Wider in settings: Toggle elides its label and never wraps it.
     contentWidth: popup.fittedContentWidth(Style.space(root.settingsOpen ? 400 : 340))
     contentHeight: popup.fittedContentHeight(column.implicitHeight)
 
@@ -689,6 +683,8 @@ BarWidget {
           }
         }
 
+        // PlainText on every Text here: AutoText parses markup, and libvirt allows
+        // `<` in a domain name, so `a <b>c<i>` would render as `a c`.
         Text {
           id: title
           anchors.left: backButton.visible ? backButton.right : parent.left
@@ -696,6 +692,7 @@ BarWidget {
           anchors.right: headerActions.left
           anchors.rightMargin: Style.spacing.sm
           anchors.verticalCenter: parent.verticalCenter
+          textFormat: Text.PlainText
           elide: Text.ElideRight
           text: root.settingsOpen
             ? "Settings"
@@ -705,8 +702,7 @@ BarWidget {
           font.pixelSize: Style.font.subtitle
         }
 
-        // A Row, not a chain of anchors: it skips invisible children, so the
-        // buttons the settings view hides collapse instead of leaving a gap.
+        // A Row skips invisible children, so hidden buttons leave no gap.
         Row {
           id: headerActions
           anchors.right: parent.right
@@ -727,7 +723,6 @@ BarWidget {
           PanelActionButton {
             id: refreshButton
             anchors.verticalCenter: parent.verticalCenter
-            // Nothing to re-poll in the settings view.
             visible: !root.settingsOpen
             iconText: "󰑓"
             tooltipText: "Refresh"
@@ -745,6 +740,7 @@ BarWidget {
       Text {
         width: parent.width
         visible: root.listView
+        textFormat: Text.PlainText
         elide: Text.ElideRight
         text: root.connectionLabel
         color: root.connectionDown ? popup.urgent : Qt.darker(Color.popups.text, 1.4)
@@ -767,6 +763,7 @@ BarWidget {
       Text {
         width: parent.width
         visible: root.snapshotDomain !== ""
+        textFormat: Text.PlainText
         elide: Text.ElideRight
         text: "Snapshots"
         color: Qt.darker(Color.popups.text, 1.4)
@@ -841,6 +838,7 @@ BarWidget {
             Text {
               anchors.centerIn: dot
               visible: row.working
+              textFormat: Text.PlainText
               text: "󰇙"
               color: Color.accent
               font.family: popup.fontFamily
@@ -853,6 +851,7 @@ BarWidget {
               anchors.right: actions.left
               anchors.rightMargin: Style.spacing.sm
               anchors.verticalCenter: parent.verticalCenter
+              textFormat: Text.PlainText
               elide: Text.ElideRight
               text: row.domainName
               color: nameMouse.containsMouse ? Color.accent : Color.popups.text
@@ -950,6 +949,7 @@ BarWidget {
             Text {
               width: parent.width
               visible: text !== ""
+              textFormat: Text.PlainText
               elide: Text.ElideRight
               text: root.details[root.key(row.domainName)] || ""
               color: Qt.darker(Color.popups.text, 1.4)
@@ -1021,6 +1021,7 @@ BarWidget {
       Text {
         width: parent.width
         visible: root.domains.length === 0 && root.lastError === "" && root.listView
+        textFormat: Text.PlainText
         wrapMode: Text.WordWrap
         text: "No domains defined on this connection."
         color: Color.popups.text
@@ -1030,8 +1031,7 @@ BarWidget {
       }
 
       // ---- Settings view ------------------------------------------------
-      // One Toggle per setting; the row is stateless, so the click writes the
-      // setting and the switch follows the configured* binding back.
+      // Toggle is stateless: the click writes, the switch follows the binding back.
       Column {
         id: settingsView
         width: parent.width
@@ -1086,6 +1086,7 @@ BarWidget {
             anchors.right: snapshotActions.left
             anchors.rightMargin: Style.spacing.sm
             anchors.verticalCenter: parent.verticalCenter
+            textFormat: Text.PlainText
             elide: Text.ElideRight
             text: snapshotRow.snapshotName
             color: Color.popups.text
@@ -1128,6 +1129,7 @@ BarWidget {
       Text {
         width: parent.width
         visible: root.snapshotDomain !== "" && root.snapshots.length === 0
+        textFormat: Text.PlainText
         wrapMode: Text.WordWrap
         text: "No snapshots for this domain."
         color: Color.popups.text
@@ -1176,9 +1178,9 @@ BarWidget {
       Text {
         width: parent.width
         visible: text !== ""
+        textFormat: Text.PlainText
         wrapMode: Text.WordWrap
-        // settingsError first: it is the only one the user just caused by hand,
-        // so it must not sit behind a connection error it has nothing to do with.
+        // settingsError first: the user just caused it, by hand.
         text: root.settingsError !== ""
           ? root.settingsError
           : (root.lastError !== ""
@@ -1205,6 +1207,7 @@ BarWidget {
           anchors.left: parent.left
           anchors.leftMargin: Style.spacing.sm
           anchors.verticalCenter: parent.verticalCenter
+          textFormat: Text.PlainText
           text: "󰍹  Open virt-manager"
           color: Color.popups.text
           font.family: popup.fontFamily
