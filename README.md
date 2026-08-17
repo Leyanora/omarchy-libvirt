@@ -5,9 +5,10 @@ a glyph, dimmed when nothing is running; the popup lists every domain on the
 connection with a state light, play/stop controls, and a click-to-open console.
 Expand a row for pause, reboot, save state and snapshots.
 
-It drives domains and nothing else: it never starts libvirt, never touches
-networks, and has no way to reach into a guest. Creating, cloning and deleting
-domains stay with virt-manager, which the popup's footer opens.
+It drives domains and nothing else: it never starts libvirt and never touches
+networks. It will show you a guest's IP address, but it never opens a connection
+to one. Creating, cloning and deleting domains stay with virt-manager, which the
+popup's footer opens.
 
 Claude code was heavily involved in the creation of this widget.
 
@@ -32,8 +33,24 @@ click or scroll to refresh.
 
 ### In the expanded row
 
-The caption line is the domain's static configuration — vCPU count, memory and
-OS type, straight out of `virsh dominfo`.
+Expanding a row draws a border around it, so the name, its caption and its
+buttons read as one object; collapsing it takes the border away again.
+
+The caption line is vCPU count and memory, straight out of `virsh dominfo`, and
+then the guest's **IP address** when there is one to show. **Click the address
+to copy it** to the clipboard.
+
+The address is looked up with `virsh domifaddr`, trying `lease`, then `agent`,
+then `arp`, and taking the first non-loopback IPv4 any of them returns. Plenty
+of guests have none to give: a lease only exists on a libvirt-managed network,
+`agent` needs `qemu-guest-agent` running inside the guest, and under the default
+`qemu:///session` the agent is the only one of the three that can ever work. When
+none of them answers, the caption is just vCPU and memory — nothing is shown in
+its place. The address is re-read whenever the domain starts, since a lease
+arrives well after boot.
+
+The widget reads the address and copies it. It does not connect to a guest —
+there is no SSH or RDP button, by design.
 
 - **Pause** (`virsh suspend`) freezes a running domain; the play arrow resumes
   it.
@@ -67,10 +84,16 @@ disk at all, `virsh` refuses and the popup shows you why.
 ### The settings view
 
 The cogwheel next to refresh opens a settings view, with the back arrow to
-return. It holds the one setting worth flipping from the bar rather than from a
-config file — [suppressing QEMU crash toasts](#silencing-the-shutdown-crash-toast).
-Flipping it writes the key into the widget's `shell.json` entry, so it survives a
-restart; everything else in [Settings](#settings) below stays hand-edited.
+return. It holds the settings worth changing from the bar rather than from a
+config file: [suppressing QEMU crash toasts](#silencing-the-shutdown-crash-toast),
+and, in a box of their own, the three **state light colours**. Type a hex value
+(`#rgb`, `#rrggbb` or `#aarrggbb`) and press Enter; anything else is refused with
+a message rather than being stored. The swatch beside each field shows the colour
+actually in effect.
+
+Whatever you change here is written into the widget's `shell.json` entry, so it
+survives a restart; everything else in [Settings](#settings) below stays
+hand-edited.
 
 Under the title: **Connected** when libvirt answered the last poll,
 **Disconnected** in red with the error below it when it did not. The URI is on
@@ -92,6 +115,7 @@ sudo pacman -S qemu-full libvirt virt-manager virt-viewer edk2-ovmf
 | `qemu-full` | The hypervisor, plus every guest architecture and its firmware |
 | `virt-viewer` | **Required for consoles** — it is what clicking a domain name opens |
 | `virt-manager` | Only the popup's footer button. Set `"manager": ""` to hide that row |
+| `wl-clipboard` | Only for copying a guest's IP — it provides `wl-copy` |
 | `edk2-ovmf` | UEFI firmware for guests. Optional, but a modern guest usually wants it |
 
 KVM needs no group membership on Arch — `/dev/kvm` is world-writable by udev
@@ -229,9 +253,9 @@ by the plugin id — not the display name:
 | `console` | `virt-viewer --connect {uri} {name}` | Console command; `{uri}` and `{name}` are substituted shell-quoted |
 | `manager` | `virt-manager -c <uri>` | The popup's footer action; `""` hides the row |
 | `onRightClick` | same as `manager` | Right click on the bar item |
-| `colorRunning` | `#3fb950` | State light, running |
-| `colorPaused` | `#d29922` | State light, paused |
-| `colorStopped` | `#f85149` | State light, shut off |
+| `colorRunning` | `#3fb950` | State light, running. Also editable from the cogwheel |
+| `colorPaused` | `#d29922` | State light, paused. Also editable from the cogwheel |
+| `colorStopped` | `#f85149` | State light, shut off. Also editable from the cogwheel |
 | `suppressCrashToasts` | `false` | Filter QEMU crash toasts, see [above](#silencing-the-shutdown-crash-toast). The one key the popup can also write, from its cogwheel |
 | `crashIgnore` | `^qemu-system-` | Regex of executable names to filter when the above is on. A `%` is passed through literally; a value containing a quote or newline, or ending in a backslash, is refused with an error in the popup, because it cannot survive the systemd drop-in intact |
 

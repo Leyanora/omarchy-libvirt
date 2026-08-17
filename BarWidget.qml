@@ -26,10 +26,18 @@ BarWidget {
   readonly property bool configuredSuppressCrashToasts: setting("suppressCrashToasts", false)
   readonly property string configuredCrashIgnore: setting("crashIgnore", "^qemu-system-")
 
-  // The file's only hardcoded colors: a state light must read green/red.
-  readonly property color colorRunning: setting("colorRunning", "#3fb950")
-  readonly property color colorPaused: setting("colorPaused", "#d29922")
-  readonly property color colorStopped: setting("colorStopped", "#f85149")
+  // The one sanctioned hardcode: a state light must read green/red.
+  readonly property string defaultColorRunning: "#3fb950"
+  readonly property string defaultColorPaused: "#d29922"
+  readonly property string defaultColorStopped: "#f85149"
+
+  readonly property string colorRunningHex: String(setting("colorRunning", defaultColorRunning))
+  readonly property string colorPausedHex: String(setting("colorPaused", defaultColorPaused))
+  readonly property string colorStoppedHex: String(setting("colorStopped", defaultColorStopped))
+
+  readonly property color colorRunning: colorRunningHex
+  readonly property color colorPaused: colorPausedHex
+  readonly property color colorStopped: colorStoppedHex
 
   // ---- State ----------------------------------------------------------
   property var domains: []
@@ -95,8 +103,7 @@ BarWidget {
   }
 
   // ---- Helpers ---------------------------------------------------------
-  // Names reach virsh as argv; shq() is only for the two generated scripts and
-  // the console/manager templates the host runs through its own shell.
+  // Names reach virsh as argv; shq() covers the two scripts and the host-run templates.
   function shq(value) {
     return "'" + String(value).replace(/'/g, "'\\''") + "'"
   }
@@ -192,6 +199,7 @@ BarWidget {
     if (error !== "") {
       domains = []
       details = ({})
+      addresses = ({})
       clearArm()
       expandedDomain = ""
       snapshotDomain = ""
@@ -224,16 +232,24 @@ BarWidget {
         clearArm()
     }
 
-    // Drop cached dominfo for departed domains so a redefined one re-reads.
+    // dominfo survives a stop; an address does not, which is what re-reads the lease.
     var kept = ({})
+    var keptAddresses = ({})
     for (var m = 0; m < list.length; m++) {
       var cached = details[key(list[m].name)]
       if (cached !== undefined) kept[key(list[m].name)] = cached
+      var address = addresses[key(list[m].name)]
+      if (address !== undefined && list[m].domainState === "running")
+        keptAddresses[key(list[m].name)] = address
     }
     details = kept
+    addresses = keptAddresses
 
-    if (expandedDomain !== "" && details[key(expandedDomain)] === undefined)
-      fetchDetail(expandedDomain)
+    if (expandedDomain !== "") {
+      if (details[key(expandedDomain)] === undefined) fetchDetail(expandedDomain)
+      if (addresses[key(expandedDomain)] === undefined && running[key(expandedDomain)])
+        fetchAddress(expandedDomain)
+    }
   }
 
   // No `-l`, no BASH_ENV: a startup file's output would parse as a poll record.
@@ -254,8 +270,7 @@ BarWidget {
   }
 
   // ---- Actions ---------------------------------------------------------
-  // One at a time. virsh returns when queued, not when the guest acts — hence settle.
-  // argv, never a shell string: a name never becomes shell syntax to begin with.
+  // One at a time, argv never a shell string. virsh returns when queued — hence settle.
   property var actionCommand: []
 
   // Allowlist: runAction builds argv from nothing else.
@@ -287,6 +302,22 @@ BarWidget {
       .replace(/\{name\}/g, function () { return root.shq(domain) })
     bar.run(command)
     close()
+  }
+
+  // argv, not `printf | wl-copy` through a shell: the value stays one argument.
+  property string copiedValue: ""
+
+  function copyToClipboard(value) {
+    if (value === "") return
+    Quickshell.execDetached(["wl-copy", "--", value])
+    copiedValue = value
+    copied.restart()
+  }
+
+  Timer {
+    id: copied
+    interval: 1500
+    onTriggered: root.copiedValue = ""
   }
 
   function forceOff(domain) {
@@ -354,13 +385,12 @@ BarWidget {
     detail.running = true
   }
 
-  // "CPU(s): 4" + "Max memory: 8388608 KiB" + "OS Type: hvm" -> "4 vCPU · 8 GiB · hvm"
+  // "CPU(s): 4" + "Max memory: 8388608 KiB" -> "4 vCPU  ·  8 GiB"
   function applyDetail(text) {
     if (detailDomain === "") return
 
     var cpus = ""
     var memory = ""
-    var osType = ""
 
     // No tag to strip: with argv, every line here is virsh's own.
     var lines = String(text || "").split("\n")
@@ -372,7 +402,6 @@ BarWidget {
       var value = field.substring(split + 1).trim()
       if (label === "CPU(s)") cpus = value
       else if (label === "Max memory") memory = value
-      else if (label === "OS Type") osType = value
     }
 
     var parts = []
@@ -382,12 +411,68 @@ BarWidget {
       parts.push(kib >= 1048576
         ? (Math.round(kib / 104857.6) / 10) + " GiB"
         : Math.round(kib / 1024) + " MiB")
-    if (osType !== "") parts.push(osType)
 
     var next = ({})
     for (var existing in details) next[existing] = details[existing]
     next[key(detailDomain)] = parts.join("  ·  ")
     details = next
+  }
+
+  // ---- Guest address ---------------------------------------------------
+  // Not static like dominfo: a lease lands late, so it is dropped when a domain stops.
+  property var addresses: ({})
+  property var addressCommand: []
+  property string addressDomain: ""
+
+  // In order: managed network, guest agent (all qemu:///session has), then bridged.
+  readonly property var addressSources: ["lease", "agent", "arp"]
+  property int addressSourceIndex: 0
+
+  function fetchAddress(domain) {
+    if (domain === "" || addressLookup.running) return
+    addressDomain = domain
+    addressSourceIndex = 0
+    runAddressSource()
+  }
+
+  function runAddressSource() {
+    addressCommand = ["virsh", "-c", configuredUri, "-q", "domifaddr",
+                      addressDomain, "--source", addressSources[addressSourceIndex]]
+    addressLookup.running = true
+  }
+
+  function storeAddress(domain, value) {
+    var next = ({})
+    for (var existing in addresses) next[existing] = addresses[existing]
+    next[key(domain)] = value
+    addresses = next
+  }
+
+  // First non-loopback IPv4 anywhere, so the column layout does not matter.
+  function parseAddress(text) {
+    var lines = String(text || "").split("\n")
+    for (var i = 0; i < lines.length; i++) {
+      var found = lines[i].match(/\b(\d{1,3}(?:\.\d{1,3}){3})\b/)
+      if (found && found[1] !== "127.0.0.1") return found[1]
+    }
+    return ""
+  }
+
+  Process {
+    id: addressLookup
+    command: root.addressCommand
+    stdout: StdioCollector { id: addressOut }
+    stderr: StdioCollector {}
+    onExited: function (exitCode, exitStatus) {
+      var found = root.parseAddress(addressOut.text)
+      if (found === "" && root.addressSourceIndex < root.addressSources.length - 1) {
+        root.addressSourceIndex++
+        root.runAddressSource()
+        return
+      }
+      // "" is a real answer — looked up, nothing to show — so it is stored too.
+      root.storeAddress(root.addressDomain, found)
+    }
   }
 
   Process {
@@ -405,8 +490,16 @@ BarWidget {
   }
 
   onExpandedDomainChanged: {
-    if (expandedDomain !== "" && details[key(expandedDomain)] === undefined)
-      fetchDetail(expandedDomain)
+    if (expandedDomain === "") return
+    if (details[key(expandedDomain)] === undefined) fetchDetail(expandedDomain)
+    if (addresses[key(expandedDomain)] === undefined && domainIsRunning(expandedDomain))
+      fetchAddress(expandedDomain)
+  }
+
+  function domainIsRunning(name) {
+    for (var i = 0; i < domains.length; i++)
+      if (domains[i].name === name) return domains[i].domainState === "running"
+    return false
   }
 
   // ---- Snapshots -------------------------------------------------------
@@ -494,8 +587,7 @@ BarWidget {
     settingsOpen = false
   }
 
-  // The only write to user config. updateEntryInline replaces the entry
-  // wholesale, so the merge below is mandatory or every other key is lost.
+  // The only write to user config, and it replaces the entry wholesale — hence the merge.
   function persistSetting(name, value) {
     var entry = { id: moduleName }
     for (var existing in settings) if (existing !== "id") entry[existing] = settings[existing]
@@ -511,10 +603,40 @@ BarWidget {
     }
   }
 
+  readonly property var colorSettings: [
+    { name: "colorRunning", label: "Running" },
+    { name: "colorPaused", label: "Paused" },
+    { name: "colorStopped", label: "Shut off" }
+  ]
+
+  function colorHex(name) {
+    return name === "colorRunning" ? colorRunningHex
+      : (name === "colorPaused" ? colorPausedHex : colorStoppedHex)
+  }
+
+  function colorValue(name) {
+    return name === "colorRunning" ? colorRunning
+      : (name === "colorPaused" ? colorPaused : colorStopped)
+  }
+
+  // Rejected rather than handed to a color property, which reads a bad string as black.
+  function isColorHex(value) {
+    return /^#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(String(value).trim())
+  }
+
+  function persistColor(name, value) {
+    var clean = String(value).trim()
+    if (!isColorHex(clean)) {
+      settingsError = "not a colour: use #rgb, #rrggbb or #aarrggbb"
+      return false
+    }
+    settingsError = ""
+    persistSetting(name, clean)
+    return true
+  }
+
   // ---- Crash toast suppression ----------------------------------------
-  // Four load-bearing constraints: flock (the per-monitor copies race), content
-  // compare (skips daemon-reload), marker line (never deletes a hand-written
-  // file), runtime dir not ~/.config (no uninstall hook, so it cannot outlive us).
+  // Four load-bearing constraints: flock, content compare, marker line, runtime dir.
   property string crashToggleError: ""
 
   // Built at call time, never bound: a handler runs before siblings re-evaluate.
@@ -683,8 +805,7 @@ BarWidget {
           }
         }
 
-        // PlainText on every Text here: AutoText parses markup, and libvirt allows
-        // `<` in a domain name, so `a <b>c<i>` would render as `a c`.
+        // PlainText on every Text: AutoText would parse `<` in a domain name as markup.
         Text {
           id: title
           anchors.left: backButton.visible ? backButton.right : parent.left
@@ -710,7 +831,6 @@ BarWidget {
           spacing: Style.spacing.xs
 
           PanelActionButton {
-            id: settingsButton
             anchors.verticalCenter: parent.verticalCenter
             visible: root.listView
             iconText: "󰒓"
@@ -721,7 +841,6 @@ BarWidget {
           }
 
           PanelActionButton {
-            id: refreshButton
             anchors.verticalCenter: parent.verticalCenter
             visible: !root.settingsOpen
             iconText: "󰑓"
@@ -801,217 +920,276 @@ BarWidget {
           readonly property bool expanded: root.expandedDomain === row.domainName
 
           width: list.width
-          height: header.height + (row.expanded ? detailPane.height + Style.spacing.xs : 0)
+          height: frame.height
 
-          // Hover fill belongs to the header, not the whole delegate.
-          Rectangle {
-            id: header
+          // The border is what makes an expanded row read as one object.
+          BorderSurface {
+            id: frame
             width: parent.width
-            height: Style.space(30)
+            height: header.height + (row.expanded
+              ? detailPane.height + Style.spacing.sm + frame.borderTop * 2
+              : 0)
             radius: Style.cornerRadius
-            color: rowMouse.containsMouse ? Style.hoverFill : "transparent"
+            color: "transparent"
+            borderSpec: row.expanded
+              ? Border.flat(Qt.darker(popup.foreground, 1.8), Math.max(1, Style.space(1)))
+              : Border.none()
 
-            MouseArea {
-              id: rowMouse
-              anchors.fill: parent
-              hoverEnabled: true
-              acceptedButtons: Qt.NoButton
-            }
-
+            // Hover fill belongs to the header, not the whole delegate.
             Rectangle {
-              id: dot
+              id: header
+              anchors.top: parent.top
               anchors.left: parent.left
-              anchors.leftMargin: Style.spacing.sm
-              anchors.verticalCenter: parent.verticalCenter
-              width: Style.space(8)
-              height: width
-              radius: width / 2
-              // Hollow, not a fourth colour: a saved domain is still shut off.
-              color: row.isSaved
-                ? "transparent"
-                : (row.isRunning ? root.colorRunning : (row.isPaused ? root.colorPaused : root.colorStopped))
-              border.width: row.isSaved ? Math.max(1, Style.space(2)) : 0
-              border.color: root.colorStopped
-              visible: !row.working
-            }
-
-            Text {
-              anchors.centerIn: dot
-              visible: row.working
-              textFormat: Text.PlainText
-              text: "󰇙"
-              color: Color.accent
-              font.family: popup.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            Text {
-              anchors.left: dot.right
-              anchors.leftMargin: Style.spacing.md
-              anchors.right: actions.left
-              anchors.rightMargin: Style.spacing.sm
-              anchors.verticalCenter: parent.verticalCenter
-              textFormat: Text.PlainText
-              elide: Text.ElideRight
-              text: row.domainName
-              color: nameMouse.containsMouse ? Color.accent : Color.popups.text
-              opacity: row.isOff ? 0.6 : 1.0
-              font.family: popup.fontFamily
-              font.pixelSize: Style.font.body
-              font.underline: nameMouse.containsMouse
+              anchors.right: parent.right
+              anchors.margins: frame.borderTop
+              height: Style.space(30)
+              radius: Style.cornerRadius
+              color: rowMouse.containsMouse ? Style.hoverFill : "transparent"
 
               MouseArea {
-                id: nameMouse
+                id: rowMouse
                 anchors.fill: parent
                 hoverEnabled: true
-                enabled: !row.isOff && root.configuredConsole !== ""
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.openConsole(row.domainName)
+                acceptedButtons: Qt.NoButton
+              }
 
-                PanelToolTip {
-                  visible: nameMouse.containsMouse
-                  text: "Open console"
+              Rectangle {
+                id: dot
+                anchors.left: parent.left
+                anchors.leftMargin: Style.spacing.sm
+                anchors.verticalCenter: parent.verticalCenter
+                width: Style.space(8)
+                height: width
+                radius: width / 2
+                // Hollow, not a fourth colour: a saved domain is still shut off.
+                color: row.isSaved
+                  ? "transparent"
+                  : (row.isRunning ? root.colorRunning : (row.isPaused ? root.colorPaused : root.colorStopped))
+                border.width: row.isSaved ? Math.max(1, Style.space(2)) : 0
+                border.color: root.colorStopped
+                visible: !row.working
+              }
+
+              Text {
+                anchors.centerIn: dot
+                visible: row.working
+                textFormat: Text.PlainText
+                text: "󰇙"
+                color: Color.accent
+                font.family: popup.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Text {
+                anchors.left: dot.right
+                anchors.leftMargin: Style.spacing.md
+                anchors.right: actions.left
+                anchors.rightMargin: Style.spacing.sm
+                anchors.verticalCenter: parent.verticalCenter
+                textFormat: Text.PlainText
+                elide: Text.ElideRight
+                text: row.domainName
+                color: nameMouse.containsMouse ? Color.accent : Color.popups.text
+                opacity: row.isOff ? 0.6 : 1.0
+                font.family: popup.fontFamily
+                font.pixelSize: Style.font.body
+                font.underline: nameMouse.containsMouse
+
+                MouseArea {
+                  id: nameMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  enabled: !row.isOff && root.configuredConsole !== ""
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.openConsole(row.domainName)
+
+                  PanelToolTip {
+                    visible: nameMouse.containsMouse
+                    text: "Open console"
+                    fontFamily: popup.fontFamily
+                  }
+                }
+              }
+
+              Row {
+                id: actions
+                anchors.right: parent.right
+                anchors.rightMargin: Style.spacing.xs
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: Style.spacing.xxs
+
+                PanelActionButton {
+                  visible: row.isOff
+                  iconText: row.isSaved ? "󰦛" : "󰐊"
+                  tooltipText: row.isSaved ? "Restore" : "Start"
+                  foreground: popup.foreground
                   fontFamily: popup.fontFamily
+                  enabled: !root.busy
+                  onClicked: root.runAction("start", row.domainName)
+                }
+
+                PanelActionButton {
+                  visible: row.isPaused
+                  iconText: "󰐊"
+                  tooltipText: "Resume"
+                  foreground: popup.foreground
+                  fontFamily: popup.fontFamily
+                  enabled: !root.busy
+                  onClicked: root.runAction("resume", row.domainName)
+                }
+
+                PanelActionButton {
+                  visible: row.isRunning
+                  iconText: "󰓛"
+                  tooltipText: "Shut down"
+                  foreground: popup.foreground
+                  fontFamily: popup.fontFamily
+                  enabled: !root.busy
+                  onClicked: root.runAction("shutdown", row.domainName)
+                }
+
+                PanelActionButton {
+                  visible: !row.isOff
+                  iconText: "󱐋"
+                  tooltipText: row.armedForceOff ? "Click again to force off" : "Force off"
+                  foreground: row.armedForceOff ? popup.urgent : popup.foreground
+                  hoverColor: popup.urgent
+                  bordered: row.armedForceOff
+                  fontFamily: popup.fontFamily
+                  enabled: !root.busy
+                  onClicked: root.forceOff(row.domainName)
+                }
+
+                PanelActionButton {
+                  iconText: row.expanded ? "󰅃" : "󰅀"
+                  tooltipText: row.expanded ? "Less" : "More"
+                  foreground: popup.foreground
+                  fontFamily: popup.fontFamily
+                  onClicked: root.expandedDomain = row.expanded ? "" : row.domainName
                 }
               }
             }
 
-            Row {
-              id: actions
+            // ---- Expanded detail ----------------------------------------
+            Column {
+              id: detailPane
+              anchors.top: header.bottom
+              anchors.left: parent.left
               anchors.right: parent.right
-              anchors.rightMargin: Style.spacing.xs
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.spacing.xxs
+              anchors.leftMargin: Style.spacing.md + frame.borderLeft
+              anchors.rightMargin: Style.spacing.xs + frame.borderRight
+              visible: row.expanded
+              spacing: Style.spacing.xs
 
-              PanelActionButton {
-                visible: row.isOff
-                iconText: row.isSaved ? "󰦛" : "󰐊"
-                tooltipText: row.isSaved ? "Restore" : "Start"
-                foreground: popup.foreground
-                fontFamily: popup.fontFamily
-                enabled: !root.busy
-                onClicked: root.runAction("start", row.domainName)
+              // The address is its own item so only it is clickable; "" means none found.
+              Row {
+                id: detailLine
+                width: parent.width
+                spacing: 0
+
+                readonly property string spec: root.details[root.key(row.domainName)] || ""
+                readonly property string address: row.isRunning
+                  ? (root.addresses[root.key(row.domainName)] || "")
+                  : ""
+
+                Text {
+                  textFormat: Text.PlainText
+                  text: detailLine.spec
+                  color: Qt.darker(Color.popups.text, 1.4)
+                  font.family: popup.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                Text {
+                  visible: detailLine.address !== "" && detailLine.spec !== ""
+                  textFormat: Text.PlainText
+                  text: "  ·  "
+                  color: Qt.darker(Color.popups.text, 1.4)
+                  font.family: popup.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                Text {
+                  visible: detailLine.address !== ""
+                  textFormat: Text.PlainText
+                  text: detailLine.address
+                  color: addressMouse.containsMouse ? Color.accent : Qt.darker(Color.popups.text, 1.4)
+                  font.family: popup.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.underline: addressMouse.containsMouse
+
+                  MouseArea {
+                    id: addressMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.copyToClipboard(detailLine.address)
+
+                    PanelToolTip {
+                      visible: addressMouse.containsMouse
+                      text: root.copiedValue === detailLine.address ? "Copied" : "Copy IP"
+                      fontFamily: popup.fontFamily
+                    }
+                  }
+                }
               }
 
-              PanelActionButton {
-                visible: row.isPaused
-                iconText: "󰐊"
-                tooltipText: "Resume"
-                foreground: popup.foreground
-                fontFamily: popup.fontFamily
-                enabled: !root.busy
-                onClicked: root.runAction("resume", row.domainName)
-              }
+              Row {
+                spacing: Style.spacing.xxs
 
-              PanelActionButton {
-                visible: row.isRunning
-                iconText: "󰓛"
-                tooltipText: "Shut down"
-                foreground: popup.foreground
-                fontFamily: popup.fontFamily
-                enabled: !root.busy
-                onClicked: root.runAction("shutdown", row.domainName)
-              }
+                PanelActionButton {
+                  visible: row.isRunning
+                  iconText: "󰏤"
+                  tooltipText: "Pause"
+                  foreground: popup.foreground
+                  fontFamily: popup.fontFamily
+                  enabled: !root.busy
+                  onClicked: root.runAction("suspend", row.domainName)
+                }
 
-              PanelActionButton {
-                visible: !row.isOff
-                iconText: "󱐋"
-                tooltipText: row.armedForceOff ? "Click again to force off" : "Force off"
-                foreground: row.armedForceOff ? popup.urgent : popup.foreground
-                hoverColor: popup.urgent
-                bordered: row.armedForceOff
-                fontFamily: popup.fontFamily
-                enabled: !root.busy
-                onClicked: root.forceOff(row.domainName)
-              }
+                PanelActionButton {
+                  visible: row.isRunning
+                  iconText: "󰜉"
+                  tooltipText: "Reboot"
+                  foreground: popup.foreground
+                  fontFamily: popup.fontFamily
+                  enabled: !root.busy
+                  onClicked: root.runAction("reboot", row.domainName)
+                }
 
-              PanelActionButton {
-                iconText: row.expanded ? "󰅃" : "󰅀"
-                tooltipText: row.expanded ? "Less" : "More"
-                foreground: popup.foreground
-                fontFamily: popup.fontFamily
-                onClicked: root.expandedDomain = row.expanded ? "" : row.domainName
-              }
-            }
-          }
+                PanelActionButton {
+                  visible: !row.isOff
+                  iconText: "󰆓"
+                  tooltipText: "Save state"
+                  foreground: popup.foreground
+                  fontFamily: popup.fontFamily
+                  enabled: !root.busy
+                  onClicked: root.runAction("managedsave", row.domainName)
+                }
 
-          // ---- Expanded detail ----------------------------------------
-          Column {
-            id: detailPane
-            anchors.top: header.bottom
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.leftMargin: Style.spacing.md
-            anchors.rightMargin: Style.spacing.xs
-            visible: row.expanded
-            spacing: Style.spacing.xs
+                PanelActionButton {
+                  visible: row.isSaved
+                  iconText: "󰆴"
+                  tooltipText: row.armedDiscard
+                    ? "Click again to discard the saved state"
+                    : "Discard saved state"
+                  foreground: row.armedDiscard ? popup.urgent : popup.foreground
+                  hoverColor: popup.urgent
+                  bordered: row.armedDiscard
+                  fontFamily: popup.fontFamily
+                  enabled: !root.busy
+                  onClicked: root.discardSaved(row.domainName)
+                }
 
-            Text {
-              width: parent.width
-              visible: text !== ""
-              textFormat: Text.PlainText
-              elide: Text.ElideRight
-              text: root.details[root.key(row.domainName)] || ""
-              color: Qt.darker(Color.popups.text, 1.4)
-              font.family: popup.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-
-            Row {
-              spacing: Style.spacing.xxs
-
-              PanelActionButton {
-                visible: row.isRunning
-                iconText: "󰏤"
-                tooltipText: "Pause"
-                foreground: popup.foreground
-                fontFamily: popup.fontFamily
-                enabled: !root.busy
-                onClicked: root.runAction("suspend", row.domainName)
-              }
-
-              PanelActionButton {
-                visible: row.isRunning
-                iconText: "󰜉"
-                tooltipText: "Reboot"
-                foreground: popup.foreground
-                fontFamily: popup.fontFamily
-                enabled: !root.busy
-                onClicked: root.runAction("reboot", row.domainName)
-              }
-
-              PanelActionButton {
-                visible: !row.isOff
-                iconText: "󰆓"
-                tooltipText: "Save state"
-                foreground: popup.foreground
-                fontFamily: popup.fontFamily
-                enabled: !root.busy
-                onClicked: root.runAction("managedsave", row.domainName)
-              }
-
-              PanelActionButton {
-                visible: row.isSaved
-                iconText: "󰆴"
-                tooltipText: row.armedDiscard
-                  ? "Click again to discard the saved state"
-                  : "Discard saved state"
-                foreground: row.armedDiscard ? popup.urgent : popup.foreground
-                hoverColor: popup.urgent
-                bordered: row.armedDiscard
-                fontFamily: popup.fontFamily
-                enabled: !root.busy
-                onClicked: root.discardSaved(row.domainName)
-              }
-
-              PanelActionButton {
-                visible: root.configuredShowSnapshots
-                iconText: "󰄄"
-                tooltipText: "Snapshots"
-                foreground: popup.foreground
-                fontFamily: popup.fontFamily
-                enabled: !root.busy
-                onClicked: root.openSnapshots(row.domainName)
+                PanelActionButton {
+                  visible: root.configuredShowSnapshots
+                  iconText: "󰄄"
+                  tooltipText: "Snapshots"
+                  foreground: popup.foreground
+                  fontFamily: popup.fontFamily
+                  enabled: !root.busy
+                  onClicked: root.openSnapshots(row.domainName)
+                }
               }
             }
           }
@@ -1033,7 +1211,6 @@ BarWidget {
       // ---- Settings view ------------------------------------------------
       // Toggle is stateless: the click writes, the switch follows the binding back.
       Column {
-        id: settingsView
         width: parent.width
         visible: root.settingsOpen
         spacing: Style.spacing.sm
@@ -1046,6 +1223,91 @@ BarWidget {
           foreground: popup.foreground
           fontFamily: popup.fontFamily
           onClicked: root.persistSetting("suppressCrashToasts", !root.configuredSuppressCrashToasts)
+        }
+
+        // Boxed off: three parts of one setting, which a bare hex field would not read as.
+        BorderSurface {
+          width: parent.width
+          height: colorGroup.implicitHeight + Style.spacing.sm * 2
+          radius: Style.cornerRadius
+          color: "transparent"
+          borderSpec: Border.flat(Qt.darker(popup.foreground, 1.8), Math.max(1, Style.space(1)))
+
+          Column {
+            id: colorGroup
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: Style.spacing.sm
+            spacing: Style.spacing.xs
+
+            PanelSectionHeader {
+              text: "State light colours"
+              foreground: popup.foreground
+              fontFamily: popup.fontFamily
+            }
+
+            Repeater {
+              model: root.colorSettings
+
+              delegate: Item {
+                id: colorRow
+                required property var modelData
+
+                width: colorGroup.width
+                height: Math.max(swatch.height, colorField.implicitHeight)
+
+                Rectangle {
+                  id: swatch
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Style.space(12)
+                  height: width
+                  radius: width / 2
+                  color: root.colorValue(colorRow.modelData.name)
+                }
+
+                Text {
+                  id: colorLabel
+                  anchors.left: swatch.right
+                  anchors.leftMargin: Style.spacing.sm
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Style.space(64)
+                  textFormat: Text.PlainText
+                  elide: Text.ElideRight
+                  text: colorRow.modelData.label
+                  color: Color.popups.text
+                  font.family: popup.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                }
+
+                TextField {
+                  id: colorField
+                  anchors.left: colorLabel.right
+                  anchors.leftMargin: Style.spacing.sm
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.colorHex(colorRow.modelData.name)
+                  placeholderText: "#rrggbb"
+                  foreground: popup.foreground
+                  font.family: popup.fontFamily
+                  // Typing breaks the binding, so a rejected value is put back by hand.
+                  onAccepted: {
+                    if (!root.persistColor(colorRow.modelData.name, text))
+                      text = root.colorHex(colorRow.modelData.name)
+                  }
+
+                  Connections {
+                    target: root
+                    function onSettingsOpenChanged() {
+                      if (root.settingsOpen)
+                        colorField.text = root.colorHex(colorRow.modelData.name)
+                    }
+                  }
+                }
+              }
+            }
+          }
         }
       }
 
