@@ -64,6 +64,14 @@ one. Existing snapshots are never renamed — only what you type is cleaned.
 Internal snapshots need **qcow2** disks. On a raw disk, or a domain with no
 disk at all, `virsh` refuses and the popup shows you why.
 
+### The settings view
+
+The cogwheel next to refresh opens a settings view, with the back arrow to
+return. It holds the one setting worth flipping from the bar rather than from a
+config file — [suppressing QEMU crash toasts](#silencing-the-shutdown-crash-toast).
+Flipping it writes the key into the widget's `shell.json` entry, so it survives a
+restart; everything else in [Settings](#settings) below stays hand-edited.
+
 Under the title: **Connected** when libvirt answered the last poll,
 **Disconnected** in red with the error below it when it did not. The URI is on
 hover. The widget only reads and drives domains — it never starts libvirt, so a
@@ -132,11 +140,11 @@ Nothing of yours is touched: the widget only ever shells out to `virsh`, so
 your domains, disks, networks and libvirt config are exactly as you left them.
 The packages above stay installed.
 
-The one thing that outlives the command is the crash-toast drop-in, and only
-until you next log in — it lives in `$XDG_RUNTIME_DIR`, which is wiped with the
-session. To be rid of it right now, either set `"suppressCrashToasts": false`
-*before* removing the plugin, which deletes it on the spot, or clean up by hand
-afterwards:
+The one thing that outlives the command is the crash-toast drop-in — and only if
+you turned it on, and only until you next log in, since it lives in
+`$XDG_RUNTIME_DIR`, which is wiped with the session. To be rid of it right now,
+either switch it off *before* removing the plugin, which deletes it on the spot,
+or clean up by hand afterwards:
 
 ```bash
 rm -f "$XDG_RUNTIME_DIR/systemd/user/omarchy-crash-watch.service.d/50-leyanora.libvirt.conf"
@@ -153,8 +161,11 @@ The guest has already stopped by then, so nothing is lost — it is an upstream
 bug with no consequence beyond the toast. But you press the button that
 triggers it here, so this is where it gets handled.
 
-It is therefore **on by default**. Whenever the widget starts it writes a
-drop-in at
+It is therefore offered as a setting, reachable from the cogwheel in the popup
+header — or as `suppressCrashToasts` in `shell.json`, which is the same key.
+Flipping the switch writes it back to `shell.json`, so it sticks.
+
+It is **off by default**. Turned on, the widget writes a drop-in at
 
 ```
 $XDG_RUNTIME_DIR/systemd/user/omarchy-crash-watch.service.d/50-leyanora.libvirt.conf
@@ -171,17 +182,17 @@ widget. In the runtime directory it is rewritten on every start and gone at the
 next login. (Upgrading from an earlier version also sweeps the old `~/.config`
 drop-in away.)
 
-Turn it off with:
+Turn it on from the cogwheel, or with:
 
 ```json
-{ "id": "leyanora.libvirt", "suppressCrashToasts": false }
+{ "id": "leyanora.libvirt", "suppressCrashToasts": true }
 ```
 
 Two things worth knowing:
 
 - The watcher filters on the executable name only, so this also silences a QEMU
   crash that happens *mid-run* — a VM dying under you goes unannounced. That is
-  the reason to consider turning it off.
+  the reason it is off by default.
 - The widget will only ever delete a drop-in carrying its own marker comment, so
   a file you wrote by hand at either path is left alone.
 
@@ -221,7 +232,7 @@ by the plugin id — not the display name:
 | `colorRunning` | `#3fb950` | State light, running |
 | `colorPaused` | `#d29922` | State light, paused |
 | `colorStopped` | `#f85149` | State light, shut off |
-| `suppressCrashToasts` | `true` | Filter QEMU crash toasts, see [above](#silencing-the-shutdown-crash-toast) |
+| `suppressCrashToasts` | `false` | Filter QEMU crash toasts, see [above](#silencing-the-shutdown-crash-toast). The one key the popup can also write, from its cogwheel |
 | `crashIgnore` | `^qemu-system-` | Regex of executable names to filter when the above is on |
 
 ## IPC

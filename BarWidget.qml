@@ -23,7 +23,7 @@ BarWidget {
 
   readonly property string configuredConsole: setting("console", "virt-viewer --connect {uri} {name}")
 
-  readonly property bool configuredSuppressCrashToasts: setting("suppressCrashToasts", true)
+  readonly property bool configuredSuppressCrashToasts: setting("suppressCrashToasts", false)
   readonly property string configuredCrashIgnore: setting("crashIgnore", "^qemu-system-")
 
   // The file's only hardcoded colors: a state light must read green/red.
@@ -49,6 +49,11 @@ BarWidget {
 
   property string expandedDomain: ""
   property string snapshotDomain: ""
+  property bool settingsOpen: false
+
+  // Neither sub-view. The popup is too narrow to show two at once, so every
+  // list-view element gates on this rather than testing the sub-views itself.
+  readonly property bool listView: snapshotDomain === "" && !settingsOpen
 
   readonly property int runningCount: countState("running")
   readonly property int totalCount: domains.length
@@ -82,6 +87,7 @@ BarWidget {
     clearArm()
     expandedDomain = ""
     snapshotDomain = ""
+    settingsOpen = false
   }
 
   function togglePanel() {
@@ -440,6 +446,7 @@ BarWidget {
 
   function openSnapshots(domain) {
     clearArm()
+    settingsOpen = false
     snapshotDomain = domain
   }
 
@@ -474,6 +481,41 @@ BarWidget {
     if (confirmed("snapshot-delete", domain, name, configuredConfirmSnapshotRevert))
       runScript("virsh -c " + shq(configuredUri) + " snapshot-delete " + shq(domain)
         + " " + shq(name) + " >/dev/null", domain)
+  }
+
+  // ---- Settings view ---------------------------------------------------
+  property string settingsError: ""
+
+  function openSettings() {
+    clearArm()
+    snapshotDomain = ""
+    settingsOpen = true
+  }
+
+  function closeSettings() {
+    settingsOpen = false
+  }
+
+  // The one place this widget writes user config. updateEntryInline replaces
+  // the entry wholesale, so the existing keys have to be merged in or every
+  // other setting on it is dropped.
+  function persistSetting(name, value) {
+    var entry = { id: moduleName }
+    for (var existing in settings) if (existing !== "id") entry[existing] = settings[existing]
+    entry[name] = value
+
+    // Applied locally first so the switch throws on the click itself; the
+    // shell.json write comes back through the bar as the same value. That
+    // assignment is also what re-fires the configured* bindings, so a setting
+    // with a change handler — suppressCrashToasts has one — reconciles itself.
+    settings = entry
+    if (bar && bar.shell && typeof bar.shell.updateEntryInline === "function") {
+      settingsError = ""
+      bar.shell.updateEntryInline(moduleName, entry)
+    } else {
+      // Degrades to session-only rather than failing silently.
+      settingsError = "could not save: the shell did not expose updateEntryInline"
+    }
   }
 
   // ---- Crash toast suppression ----------------------------------------
@@ -614,7 +656,9 @@ BarWidget {
     bar: root.bar
     owner: root
     open: root.popupOpen
-    contentWidth: popup.fittedContentWidth(Style.space(340))
+    // Wider in the settings view: Toggle elides its label and never wraps it,
+    // and a setting worth a sentence does not fit the list view's width.
+    contentWidth: popup.fittedContentWidth(Style.space(root.settingsOpen ? 400 : 340))
     contentHeight: popup.fittedContentHeight(column.implicitHeight)
 
     readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
@@ -628,53 +672,79 @@ BarWidget {
 
       Item {
         width: parent.width
-        implicitHeight: Math.max(title.implicitHeight, refreshButton.implicitHeight)
+        implicitHeight: Math.max(title.implicitHeight, headerActions.implicitHeight)
 
         PanelActionButton {
           id: backButton
           anchors.left: parent.left
           anchors.verticalCenter: parent.verticalCenter
-          visible: root.snapshotDomain !== ""
+          visible: !root.listView
           iconText: "󰅁"
           tooltipText: "Back"
           foreground: popup.foreground
           fontFamily: popup.fontFamily
-          onClicked: root.closeSnapshots()
+          onClicked: {
+            if (root.settingsOpen) root.closeSettings()
+            else root.closeSnapshots()
+          }
         }
 
         Text {
           id: title
           anchors.left: backButton.visible ? backButton.right : parent.left
           anchors.leftMargin: backButton.visible ? Style.spacing.xs : 0
-          anchors.right: refreshButton.left
+          anchors.right: headerActions.left
           anchors.rightMargin: Style.spacing.sm
           anchors.verticalCenter: parent.verticalCenter
           elide: Text.ElideRight
-          text: root.snapshotDomain !== "" ? root.snapshotDomain : "Virtual machines"
+          text: root.settingsOpen
+            ? "Settings"
+            : (root.snapshotDomain !== "" ? root.snapshotDomain : "Virtual machines")
           color: Color.popups.text
           font.family: popup.fontFamily
           font.pixelSize: Style.font.subtitle
         }
 
-        PanelActionButton {
-          id: refreshButton
+        // A Row, not a chain of anchors: it skips invisible children, so the
+        // buttons the settings view hides collapse instead of leaving a gap.
+        Row {
+          id: headerActions
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
-          iconText: "󰑓"
-          tooltipText: "Refresh"
-          foreground: popup.foreground
-          fontFamily: popup.fontFamily
-          enabled: !root.busy
-          onClicked: {
-            if (root.snapshotDomain !== "") root.fetchSnapshots(root.snapshotDomain)
-            else root.refresh()
+          spacing: Style.spacing.xs
+
+          PanelActionButton {
+            id: settingsButton
+            anchors.verticalCenter: parent.verticalCenter
+            visible: root.listView
+            iconText: "󰒓"
+            tooltipText: "Settings"
+            foreground: popup.foreground
+            fontFamily: popup.fontFamily
+            onClicked: root.openSettings()
+          }
+
+          PanelActionButton {
+            id: refreshButton
+            anchors.verticalCenter: parent.verticalCenter
+            // Nothing to re-poll in the settings view.
+            visible: !root.settingsOpen
+            iconText: "󰑓"
+            tooltipText: "Refresh"
+            foreground: popup.foreground
+            fontFamily: popup.fontFamily
+            enabled: !root.busy
+            onClicked: {
+              if (root.snapshotDomain !== "") root.fetchSnapshots(root.snapshotDomain)
+              else root.refresh()
+            }
           }
         }
       }
 
       Text {
         width: parent.width
-        visible: root.snapshotDomain === ""
+        visible: root.listView
         elide: Text.ElideRight
         text: root.connectionLabel
         color: root.connectionDown ? popup.urgent : Qt.darker(Color.popups.text, 1.4)
@@ -712,7 +782,7 @@ BarWidget {
         id: list
         width: parent.width
         height: Math.min(contentHeight, Style.space(300))
-        visible: root.domains.length > 0 && root.snapshotDomain === ""
+        visible: root.domains.length > 0 && root.listView
         clip: true
         interactive: contentHeight > height
         boundsBehavior: Flickable.StopAtBounds
@@ -950,13 +1020,33 @@ BarWidget {
 
       Text {
         width: parent.width
-        visible: root.domains.length === 0 && root.lastError === "" && root.snapshotDomain === ""
+        visible: root.domains.length === 0 && root.lastError === "" && root.listView
         wrapMode: Text.WordWrap
         text: "No domains defined on this connection."
         color: Color.popups.text
         opacity: 0.7
         font.family: popup.fontFamily
         font.pixelSize: Style.font.bodySmall
+      }
+
+      // ---- Settings view ------------------------------------------------
+      // One Toggle per setting; the row is stateless, so the click writes the
+      // setting and the switch follows the configured* binding back.
+      Column {
+        id: settingsView
+        width: parent.width
+        visible: root.settingsOpen
+        spacing: Style.spacing.sm
+
+        Toggle {
+          width: parent.width
+          label: "Suppress qemu crash notifications"
+          description: "Also silences a QEMU crash that happens mid-run."
+          checked: root.configuredSuppressCrashToasts
+          foreground: popup.foreground
+          fontFamily: popup.fontFamily
+          onClicked: root.persistSetting("suppressCrashToasts", !root.configuredSuppressCrashToasts)
+        }
       }
 
       // ---- Snapshot view ------------------------------------------------
@@ -1087,16 +1177,20 @@ BarWidget {
         width: parent.width
         visible: text !== ""
         wrapMode: Text.WordWrap
-        text: root.lastError !== ""
-          ? root.lastError
-          : (root.actionError !== "" ? root.actionError : root.crashToggleError)
+        // settingsError first: it is the only one the user just caused by hand,
+        // so it must not sit behind a connection error it has nothing to do with.
+        text: root.settingsError !== ""
+          ? root.settingsError
+          : (root.lastError !== ""
+            ? root.lastError
+            : (root.actionError !== "" ? root.actionError : root.crashToggleError))
         color: popup.urgent
         font.family: popup.fontFamily
         font.pixelSize: Style.font.bodySmall
       }
 
       PanelSeparator {
-        visible: root.configuredManager !== "" && root.snapshotDomain === ""
+        visible: root.configuredManager !== "" && root.listView
         foreground: popup.foreground
       }
 
@@ -1104,7 +1198,7 @@ BarWidget {
         width: parent.width
         height: Style.space(28)
         radius: Style.cornerRadius
-        visible: root.configuredManager !== "" && root.snapshotDomain === ""
+        visible: root.configuredManager !== "" && root.listView
         color: managerMouse.containsMouse ? Style.hoverFill : "transparent"
 
         Text {
