@@ -1,5 +1,4 @@
 import QtQuick
-import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
@@ -18,7 +17,6 @@ BarWidget {
   readonly property bool configuredConfirmDiscardSaved: setting("confirmDiscardSaved", true)
   readonly property bool configuredConfirmSnapshotRevert: setting("confirmSnapshotRevert", true)
   readonly property bool configuredShowSnapshots: setting("showSnapshots", true)
-  readonly property int configuredAddressWindow: Math.max(10, setting("addressWindow", 120))
   // Floored, not theme-pure: a sharp theme would otherwise render every corner square.
   readonly property int configuredRadius: setting("cornerRadius", Math.max(Style.cornerRadius, Style.space(6)))
   readonly property string configuredManager: setting("manager", "virt-manager -c " + shq(configuredUri))
@@ -55,8 +53,6 @@ BarWidget {
   property string armedAction: ""
   property string armedDomain: ""
   property string armedVerb: ""
-
-  property var details: ({})
 
   property string expandedDomain: ""
   property string snapshotDomain: ""
@@ -113,6 +109,11 @@ BarWidget {
 
   function key(name) {
     return "d:" + name
+  }
+
+  // Host tooltips are AutoText and out of reach: with no `<`, nothing parses as markup.
+  function plain(value) {
+    return String(value).replace(/</g, "")
   }
 
   // JSON, not a joined string: ("a b", "") must not collide with ("a", "b").
@@ -201,9 +202,6 @@ BarWidget {
     lastError = error
     if (error !== "") {
       domains = []
-      details = ({})
-      addresses = ({})
-      addressTries = ({})
       clearArm()
       expandedDomain = ""
       snapshotDomain = ""
@@ -234,30 +232,6 @@ BarWidget {
       var live = !!running[key(armedDomain)] || !!paused[key(armedDomain)]
       if (!defined || (armedVerb === "destroy" && !live))
         clearArm()
-    }
-
-    // dominfo survives a stop; an address does not, which is what re-reads the lease.
-    var kept = ({})
-    var keptAddresses = ({})
-    var keptTries = ({})
-    for (var m = 0; m < list.length; m++) {
-      var cached = details[key(list[m].name)]
-      if (cached !== undefined) kept[key(list[m].name)] = cached
-      if (list[m].domainState !== "running") continue
-      // A stop drops the address and the budget with it, so a restart looks again.
-      var address = addresses[key(list[m].name)]
-      if (address !== undefined) keptAddresses[key(list[m].name)] = address
-      var tries = addressTries[key(list[m].name)]
-      if (tries !== undefined) keptTries[key(list[m].name)] = tries
-    }
-    details = kept
-    addresses = keptAddresses
-    addressTries = keptTries
-
-    if (expandedDomain !== "") {
-      if (details[key(expandedDomain)] === undefined) fetchDetail(expandedDomain)
-      if (addressWanted(expandedDomain) && running[key(expandedDomain)])
-        fetchAddress(expandedDomain)
     }
   }
 
@@ -313,22 +287,6 @@ BarWidget {
     close()
   }
 
-  // argv, not `printf | wl-copy` through a shell: the value stays one argument.
-  property string copiedValue: ""
-
-  function copyToClipboard(value) {
-    if (value === "") return
-    Quickshell.execDetached(["wl-copy", "--", value])
-    copiedValue = value
-    copied.restart()
-  }
-
-  Timer {
-    id: copied
-    interval: 1500
-    onTriggered: root.copiedValue = ""
-  }
-
   function forceOff(domain) {
     if (confirmed("destroy", domain, "", configuredConfirmForceOff))
       runAction("destroy", domain)
@@ -380,183 +338,6 @@ BarWidget {
     id: disarm
     interval: 4000
     onTriggered: root.clearArm()
-  }
-
-  // ---- Domain detail ---------------------------------------------------
-  // Own Process, deliberately not gated on `busy`: a read must not queue behind an action.
-  property var detailCommand: []
-  property string detailDomain: ""
-
-  function fetchDetail(domain) {
-    if (domain === "" || detail.running) return
-    detailDomain = domain
-    detailCommand = ["virsh", "-c", configuredUri, "-q", "dominfo", domain]
-    detail.running = true
-  }
-
-  // "CPU(s): 4" + "Max memory: 8388608 KiB" -> "4 vCPU  ·  8 GiB"
-  function applyDetail(text) {
-    if (detailDomain === "") return
-
-    var cpus = ""
-    var memory = ""
-
-    // No tag to strip: with argv, every line here is virsh's own.
-    var lines = String(text || "").split("\n")
-    for (var i = 0; i < lines.length; i++) {
-      var field = lines[i]
-      var split = field.indexOf(":")
-      if (split < 0) continue
-      var label = field.substring(0, split).trim()
-      var value = field.substring(split + 1).trim()
-      if (label === "CPU(s)") cpus = value
-      else if (label === "Max memory") memory = value
-    }
-
-    var parts = []
-    if (cpus !== "") parts.push(cpus + " vCPU")
-    var kib = parseInt(memory, 10)
-    if (!isNaN(kib) && kib > 0)
-      parts.push(kib >= 1048576
-        ? (Math.round(kib / 104857.6) / 10) + " GiB"
-        : Math.round(kib / 1024) + " MiB")
-
-    var next = ({})
-    for (var existing in details) next[existing] = details[existing]
-    next[key(detailDomain)] = parts.join("  ·  ")
-    details = next
-  }
-
-  // ---- Guest address ---------------------------------------------------
-  // Not static like dominfo: a lease lands late, so it is dropped when a domain stops.
-  property var addresses: ({})
-  property var addressCommand: []
-  property string addressDomain: ""
-
-  // Completed rounds per domain; a round walks every source once.
-  property var addressTries: ({})
-
-  // Budgeted in seconds, not rounds: interval is user-settable from 2s up.
-  readonly property int addressTryLimit: Math.max(3, Math.ceil(configuredAddressWindow / configuredInterval))
-
-  // In order: managed network, guest agent (all qemu:///session has), then bridged.
-  readonly property var addressSources: ["lease", "agent", "arp"]
-  property int addressSourceIndex: 0
-
-  function fetchAddress(domain) {
-    if (domain === "" || addressLookup.running) return
-    addressDomain = domain
-    addressSourceIndex = 0
-    runAddressSource()
-  }
-
-  // True while a domain still has retry budget left and no address yet.
-  function addressWanted(domain) {
-    return domain !== "" && addresses[key(domain)] === undefined
-      && (addressTries[key(domain)] || 0) < addressTryLimit
-  }
-
-  function runAddressSource() {
-    addressCommand = ["virsh", "-c", configuredUri, "-q", "domifaddr",
-                      addressDomain, "--source", addressSources[addressSourceIndex]]
-    addressLookup.running = true
-    addressWatchdog.restart()
-  }
-
-  function storeAddress(domain, value) {
-    var next = ({})
-    for (var existing in addresses) next[existing] = addresses[existing]
-    next[key(domain)] = value
-    addresses = next
-  }
-
-  function countAddressTry(domain) {
-    var next = ({})
-    for (var existing in addressTries) next[existing] = addressTries[existing]
-    next[key(domain)] = (addressTries[key(domain)] || 0) + 1
-    addressTries = next
-  }
-
-  function resetAddressTries(domain) {
-    var next = ({})
-    for (var existing in addressTries) next[existing] = addressTries[existing]
-    delete next[key(domain)]
-    addressTries = next
-  }
-
-  // A link-local means DHCP never completed — treating it as found ends the retry.
-  function usableAddress(ip) {
-    return ip !== "0.0.0.0" && ip.indexOf("127.") !== 0 && ip.indexOf("169.254.") !== 0
-  }
-
-  // First usable IPv4 anywhere, so the column layout does not matter.
-  function parseAddress(text) {
-    var lines = String(text || "").split("\n")
-    for (var i = 0; i < lines.length; i++) {
-      var found = lines[i].match(/\b(\d{1,3}(?:\.\d{1,3}){3})\b/)
-      if (found && usableAddress(found[1])) return found[1]
-    }
-    return ""
-  }
-
-  // A connected-but-wedged agent would otherwise block every later lookup.
-  Timer {
-    id: addressWatchdog
-    interval: 10000
-    onTriggered: addressLookup.running = false
-  }
-
-  Process {
-    id: addressLookup
-    command: root.addressCommand
-    stdout: StdioCollector { id: addressOut }
-    stderr: StdioCollector {}
-    onExited: function (exitCode, exitStatus) {
-      addressWatchdog.stop()
-      var found = root.parseAddress(addressOut.text)
-      if (found === "" && root.addressSourceIndex < root.addressSources.length - 1) {
-        root.addressSourceIndex++
-        root.runAddressSource()
-        return
-      }
-      // Nothing found is never final: count the round and let the poll try again.
-      if (found === "") root.countAddressTry(root.addressDomain)
-      else root.storeAddress(root.addressDomain, found)
-
-      // Another row was expanded mid-flight; that fetch was dropped by the busy guard.
-      if (root.expandedDomain !== "" && root.expandedDomain !== root.addressDomain
-          && root.addressWanted(root.expandedDomain) && root.domainIsRunning(root.expandedDomain))
-        root.fetchAddress(root.expandedDomain)
-    }
-  }
-
-  Process {
-    id: detail
-    command: root.detailCommand
-    stdout: StdioCollector {
-      onStreamFinished: root.applyDetail(text)
-    }
-    stderr: StdioCollector {}  // a failed read blanks the caption, nothing louder
-    onExited: function (exitCode, exitStatus) {
-      // A row expanded while this fetch was in flight; catch it up.
-      if (root.expandedDomain !== "" && root.details[root.key(root.expandedDomain)] === undefined)
-        root.fetchDetail(root.expandedDomain)
-    }
-  }
-
-  onExpandedDomainChanged: {
-    if (expandedDomain === "") return
-    if (details[key(expandedDomain)] === undefined) fetchDetail(expandedDomain)
-    // Re-expanding is the manual re-check: it hands the domain a fresh budget.
-    resetAddressTries(expandedDomain)
-    if (addressWanted(expandedDomain) && domainIsRunning(expandedDomain))
-      fetchAddress(expandedDomain)
-  }
-
-  function domainIsRunning(name) {
-    for (var i = 0; i < domains.length; i++)
-      if (domains[i].name === name) return domains[i].domainState === "running"
-    return false
   }
 
   // ---- Snapshots -------------------------------------------------------
@@ -801,7 +582,7 @@ BarWidget {
     active: root.popupOpen
     useActiveColor: false
     dimmed: root.runningCount === 0
-    tooltipText: root.summary
+    tooltipText: root.plain(root.summary)
     fixedWidth: root.vertical ? root.barSize : -1
     fixedHeight: root.vertical ? root.barSize : -1
 
@@ -849,14 +630,15 @@ BarWidget {
 
     Behavior on color { ColorAnimation { duration: 60 } }
 
+    // Centred as a pair: the chips are a grid, so a shared centre line reads calmer.
     Row {
       id: chipRow
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.spacing.md + chip.borderLeft
-      anchors.rightMargin: Style.spacing.sm + chip.borderRight
+      anchors.centerIn: parent
       spacing: Style.spacing.xs
+
+      // Elide against what the chip actually offers; the row itself hugs its content.
+      readonly property real labelRoom: chip.width - chip.borderLeft - chip.borderRight
+        - Style.spacing.md * 2 - chipIcon.width - chipRow.spacing
 
       Text {
         id: chipIcon
@@ -870,7 +652,7 @@ BarWidget {
 
       Text {
         anchors.verticalCenter: parent.verticalCenter
-        width: chipRow.width - chipIcon.width - chipRow.spacing
+        width: Math.min(implicitWidth, chipRow.labelRoom)
         textFormat: Text.PlainText
         elide: Text.ElideRight
         text: chip.label
@@ -997,7 +779,7 @@ BarWidget {
 
           PanelToolTip {
             visible: connectionMouse.containsMouse
-            text: root.configuredUri
+            text: root.plain(root.configuredUri)
             fontFamily: popup.fontFamily
           }
         }
@@ -1055,7 +837,8 @@ BarWidget {
               ? detailPane.height + Style.spacing.xs + Style.spacing.sm + frame.borderTop * 2
               : 0)
             radius: root.configuredRadius
-            color: "transparent"
+            // Filled like Toggle at rest, so the name row and the chips read as one card.
+            color: row.expanded ? Style.normalFillFor(popup.foreground, Color.accent) : "transparent"
             borderSpec: row.expanded
               ? Border.flat(Qt.darker(popup.foreground, 1.8), Math.max(1, Style.space(1)))
               : Border.none()
@@ -1196,154 +979,86 @@ BarWidget {
             }
 
             // ---- Expanded detail ----------------------------------------
-            // Filled like Toggle at rest, so an open row reads as one settings-style card.
-            BorderSurface {
+            // Frame carries the fill; this is the layout box, inset to the dot's column.
+            Item {
               id: detailPane
               anchors.top: header.bottom
               anchors.topMargin: Style.spacing.xs
               anchors.left: parent.left
               anchors.right: parent.right
-              anchors.leftMargin: Style.spacing.sm + frame.borderLeft
-              anchors.rightMargin: Style.spacing.sm + frame.borderRight
+              anchors.leftMargin: frame.borderLeft
+              anchors.rightMargin: frame.borderRight
               visible: row.expanded
-              height: detailContent.implicitHeight + Style.spacing.sm * 2
-              radius: root.configuredRadius
-              color: Style.normalFillFor(popup.foreground, Color.accent)
+              height: chipGrid.implicitHeight + Style.spacing.sm * 2
 
-              Column {
-                id: detailContent
+              // Positioners skip invisible children, so this reflows for 1..4 chips.
+              Grid {
+                id: chipGrid
                 anchors.top: parent.top
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.margins: Style.spacing.sm
+                columns: 2
                 spacing: Style.spacing.xs
 
-                // The address is its own item so only it is clickable; "" means none found.
-                Row {
-                  id: detailLine
-                  width: parent.width
-                  spacing: 0
+                readonly property real chipWidth: (width - spacing) / 2
 
-                  readonly property string spec: root.details[root.key(row.domainName)] || ""
-                  readonly property string address: row.isRunning
-                    ? (root.addresses[root.key(row.domainName)] || "")
-                    : ""
-
-                  // Only `address` is a real IP; a placeholder must never reach the copy path.
-                  readonly property string addressText: !row.isRunning ? ""
-                    : address !== "" ? address
-                    : (root.addressTries[root.key(row.domainName)] || 0) >= root.addressTryLimit
-                      ? "no address" : "looking up…"
-
-                  Text {
-                    textFormat: Text.PlainText
-                    text: detailLine.spec
-                    color: Qt.darker(Color.popups.text, 1.4)
-                    font.family: popup.fontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-
-                  Text {
-                    visible: detailLine.addressText !== "" && detailLine.spec !== ""
-                    textFormat: Text.PlainText
-                    text: "  ·  "
-                    color: Qt.darker(Color.popups.text, 1.4)
-                    font.family: popup.fontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-
-                  Text {
-                    visible: detailLine.addressText !== ""
-                    textFormat: Text.PlainText
-                    text: detailLine.addressText
-                    color: addressMouse.containsMouse ? Color.accent : Qt.darker(Color.popups.text, 1.4)
-                    font.family: popup.fontFamily
-                    font.pixelSize: Style.font.caption
-                    font.underline: addressMouse.containsMouse
-
-                    MouseArea {
-                      id: addressMouse
-                      anchors.fill: parent
-                      enabled: detailLine.address !== ""
-                      hoverEnabled: enabled
-                      cursorShape: Qt.PointingHandCursor
-                      onClicked: root.copyToClipboard(detailLine.address)
-
-                      PanelToolTip {
-                        visible: addressMouse.containsMouse
-                        text: root.copiedValue === detailLine.address ? "Copied" : "Copy IP"
-                        fontFamily: popup.fontFamily
-                      }
-                    }
-                  }
+                ActionChip {
+                  visible: row.isRunning
+                  width: chipGrid.chipWidth
+                  iconText: "󰏤"
+                  label: "Pause"
+                  foreground: popup.foreground
+                  fontFamily: popup.fontFamily
+                  enabled: !root.busy
+                  onClicked: root.runAction("suspend", row.domainName)
                 }
 
-                // Positioners skip invisible children, so this reflows for 1..5 chips.
-                Grid {
-                  id: chipGrid
-                  width: parent.width
-                  columns: 2
-                  spacing: Style.spacing.xs
+                ActionChip {
+                  visible: row.isRunning
+                  width: chipGrid.chipWidth
+                  iconText: "󰜉"
+                  label: "Reboot"
+                  foreground: popup.foreground
+                  fontFamily: popup.fontFamily
+                  enabled: !root.busy
+                  onClicked: root.runAction("reboot", row.domainName)
+                }
 
-                  readonly property real chipWidth: (width - spacing) / 2
+                ActionChip {
+                  visible: !row.isOff
+                  width: chipGrid.chipWidth
+                  iconText: "󰆓"
+                  label: "Save state"
+                  foreground: popup.foreground
+                  fontFamily: popup.fontFamily
+                  enabled: !root.busy
+                  onClicked: root.runAction("managedsave", row.domainName)
+                }
 
-                  ActionChip {
-                    visible: row.isRunning
-                    width: chipGrid.chipWidth
-                    iconText: "󰏤"
-                    label: "Pause"
-                    foreground: popup.foreground
-                    fontFamily: popup.fontFamily
-                    enabled: !root.busy
-                    onClicked: root.runAction("suspend", row.domainName)
-                  }
+                // The label carries the arm state, so no tooltip has to hold a second string.
+                ActionChip {
+                  visible: row.isSaved
+                  width: chipGrid.chipWidth
+                  iconText: "󰆴"
+                  label: row.armedDiscard ? "Click again" : "Discard"
+                  foreground: popup.foreground
+                  hoverColor: popup.urgent
+                  accented: row.armedDiscard
+                  fontFamily: popup.fontFamily
+                  enabled: !root.busy
+                  onClicked: root.discardSaved(row.domainName)
+                }
 
-                  ActionChip {
-                    visible: row.isRunning
-                    width: chipGrid.chipWidth
-                    iconText: "󰜉"
-                    label: "Reboot"
-                    foreground: popup.foreground
-                    fontFamily: popup.fontFamily
-                    enabled: !root.busy
-                    onClicked: root.runAction("reboot", row.domainName)
-                  }
-
-                  ActionChip {
-                    visible: !row.isOff
-                    width: chipGrid.chipWidth
-                    iconText: "󰆓"
-                    label: "Save state"
-                    foreground: popup.foreground
-                    fontFamily: popup.fontFamily
-                    enabled: !root.busy
-                    onClicked: root.runAction("managedsave", row.domainName)
-                  }
-
-                  // The label carries the arm state, so no tooltip has to hold a second string.
-                  ActionChip {
-                    visible: row.isSaved
-                    width: chipGrid.chipWidth
-                    iconText: "󰆴"
-                    label: row.armedDiscard ? "Click again" : "Discard"
-                    foreground: popup.foreground
-                    hoverColor: popup.urgent
-                    accented: row.armedDiscard
-                    fontFamily: popup.fontFamily
-                    enabled: !root.busy
-                    onClicked: root.discardSaved(row.domainName)
-                  }
-
-                  ActionChip {
-                    visible: root.configuredShowSnapshots
-                    width: chipGrid.chipWidth
-                    iconText: "󰄄"
-                    label: "Snapshots"
-                    foreground: popup.foreground
-                    fontFamily: popup.fontFamily
-                    enabled: !root.busy
-                    onClicked: root.openSnapshots(row.domainName)
-                  }
+                ActionChip {
+                  visible: root.configuredShowSnapshots
+                  width: chipGrid.chipWidth
+                  iconText: "󰄄"
+                  label: "Snapshots"
+                  foreground: popup.foreground
+                  fontFamily: popup.fontFamily
+                  enabled: !root.busy
+                  onClicked: root.openSnapshots(row.domainName)
                 }
               }
             }
@@ -1372,6 +1087,8 @@ BarWidget {
 
         Toggle {
           width: parent.width
+          // Toggle hardcodes Style.cornerRadius; the floor is what keeps it off square.
+          radius: root.configuredRadius
           label: "Suppress qemu crash notifications"
           description: "Also silences a QEMU crash that happens mid-run."
           checked: root.configuredSuppressCrashToasts
@@ -1446,6 +1163,14 @@ BarWidget {
                   placeholderText: "#rrggbb"
                   foreground: popup.foreground
                   font.family: popup.fontFamily
+
+                  // TextField keeps its radius on the background delegate, out of reach
+                  // of a plain override, so it is bound rather than the delegate replaced.
+                  Binding {
+                    target: colorField.background
+                    property: "radius"
+                    value: root.configuredRadius
+                  }
                   // Typing breaks the binding, so a rejected value is put back by hand.
                   onAccepted: {
                     if (!root.persistColor(colorRow.modelData.name, text))
