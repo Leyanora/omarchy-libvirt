@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "leyanora.libvirt",
   "name": "libvirt control",
-  "version": "1.5.0",
+  "version": "1.5.2",
   "author": "Leyanora",
   "description": "libvirt frontend for the bar: a green/red state light per domain, play/stop controls, click-to-open console, and an expandable row for pause, reboot, save state and snapshots.",
   "kinds": [

@@ -1,5 +1,4 @@
 import QtQuick
-import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
@@ -18,6 +17,8 @@ BarWidget {
   readonly property bool configuredConfirmDiscardSaved: setting("confirmDiscardSaved", true)
   readonly property bool configuredConfirmSnapshotRevert: setting("confirmSnapshotRevert", true)
   readonly property bool configuredShowSnapshots: setting("showSnapshots", true)
+  // Floored, not theme-pure: a sharp theme would otherwise render every corner square.
+  readonly property int configuredRadius: setting("cornerRadius", Math.max(Style.cornerRadius, Style.space(6)))
   readonly property string configuredManager: setting("manager", "virt-manager -c " + shq(configuredUri))
   readonly property string configuredOnRightClick: setting("onRightClick", configuredManager)
 
@@ -52,8 +53,6 @@ BarWidget {
   property string armedAction: ""
   property string armedDomain: ""
   property string armedVerb: ""
-
-  property var details: ({})
 
   property string expandedDomain: ""
   property string snapshotDomain: ""
@@ -110,6 +109,11 @@ BarWidget {
 
   function key(name) {
     return "d:" + name
+  }
+
+  // Host tooltips are AutoText and out of reach: with no `<`, nothing parses as markup.
+  function plain(value) {
+    return String(value).replace(/</g, "")
   }
 
   // JSON, not a joined string: ("a b", "") must not collide with ("a", "b").
@@ -198,8 +202,6 @@ BarWidget {
     lastError = error
     if (error !== "") {
       domains = []
-      details = ({})
-      addresses = ({})
       clearArm()
       expandedDomain = ""
       snapshotDomain = ""
@@ -230,25 +232,6 @@ BarWidget {
       var live = !!running[key(armedDomain)] || !!paused[key(armedDomain)]
       if (!defined || (armedVerb === "destroy" && !live))
         clearArm()
-    }
-
-    // dominfo survives a stop; an address does not, which is what re-reads the lease.
-    var kept = ({})
-    var keptAddresses = ({})
-    for (var m = 0; m < list.length; m++) {
-      var cached = details[key(list[m].name)]
-      if (cached !== undefined) kept[key(list[m].name)] = cached
-      var address = addresses[key(list[m].name)]
-      if (address !== undefined && list[m].domainState === "running")
-        keptAddresses[key(list[m].name)] = address
-    }
-    details = kept
-    addresses = keptAddresses
-
-    if (expandedDomain !== "") {
-      if (details[key(expandedDomain)] === undefined) fetchDetail(expandedDomain)
-      if (addresses[key(expandedDomain)] === undefined && running[key(expandedDomain)])
-        fetchAddress(expandedDomain)
     }
   }
 
@@ -304,22 +287,6 @@ BarWidget {
     close()
   }
 
-  // argv, not `printf | wl-copy` through a shell: the value stays one argument.
-  property string copiedValue: ""
-
-  function copyToClipboard(value) {
-    if (value === "") return
-    Quickshell.execDetached(["wl-copy", "--", value])
-    copiedValue = value
-    copied.restart()
-  }
-
-  Timer {
-    id: copied
-    interval: 1500
-    onTriggered: root.copiedValue = ""
-  }
-
   function forceOff(domain) {
     if (confirmed("destroy", domain, "", configuredConfirmForceOff))
       runAction("destroy", domain)
@@ -371,135 +338,6 @@ BarWidget {
     id: disarm
     interval: 4000
     onTriggered: root.clearArm()
-  }
-
-  // ---- Domain detail ---------------------------------------------------
-  // Own Process, deliberately not gated on `busy`: a read must not queue behind an action.
-  property var detailCommand: []
-  property string detailDomain: ""
-
-  function fetchDetail(domain) {
-    if (domain === "" || detail.running) return
-    detailDomain = domain
-    detailCommand = ["virsh", "-c", configuredUri, "-q", "dominfo", domain]
-    detail.running = true
-  }
-
-  // "CPU(s): 4" + "Max memory: 8388608 KiB" -> "4 vCPU  ·  8 GiB"
-  function applyDetail(text) {
-    if (detailDomain === "") return
-
-    var cpus = ""
-    var memory = ""
-
-    // No tag to strip: with argv, every line here is virsh's own.
-    var lines = String(text || "").split("\n")
-    for (var i = 0; i < lines.length; i++) {
-      var field = lines[i]
-      var split = field.indexOf(":")
-      if (split < 0) continue
-      var label = field.substring(0, split).trim()
-      var value = field.substring(split + 1).trim()
-      if (label === "CPU(s)") cpus = value
-      else if (label === "Max memory") memory = value
-    }
-
-    var parts = []
-    if (cpus !== "") parts.push(cpus + " vCPU")
-    var kib = parseInt(memory, 10)
-    if (!isNaN(kib) && kib > 0)
-      parts.push(kib >= 1048576
-        ? (Math.round(kib / 104857.6) / 10) + " GiB"
-        : Math.round(kib / 1024) + " MiB")
-
-    var next = ({})
-    for (var existing in details) next[existing] = details[existing]
-    next[key(detailDomain)] = parts.join("  ·  ")
-    details = next
-  }
-
-  // ---- Guest address ---------------------------------------------------
-  // Not static like dominfo: a lease lands late, so it is dropped when a domain stops.
-  property var addresses: ({})
-  property var addressCommand: []
-  property string addressDomain: ""
-
-  // In order: managed network, guest agent (all qemu:///session has), then bridged.
-  readonly property var addressSources: ["lease", "agent", "arp"]
-  property int addressSourceIndex: 0
-
-  function fetchAddress(domain) {
-    if (domain === "" || addressLookup.running) return
-    addressDomain = domain
-    addressSourceIndex = 0
-    runAddressSource()
-  }
-
-  function runAddressSource() {
-    addressCommand = ["virsh", "-c", configuredUri, "-q", "domifaddr",
-                      addressDomain, "--source", addressSources[addressSourceIndex]]
-    addressLookup.running = true
-  }
-
-  function storeAddress(domain, value) {
-    var next = ({})
-    for (var existing in addresses) next[existing] = addresses[existing]
-    next[key(domain)] = value
-    addresses = next
-  }
-
-  // First non-loopback IPv4 anywhere, so the column layout does not matter.
-  function parseAddress(text) {
-    var lines = String(text || "").split("\n")
-    for (var i = 0; i < lines.length; i++) {
-      var found = lines[i].match(/\b(\d{1,3}(?:\.\d{1,3}){3})\b/)
-      if (found && found[1] !== "127.0.0.1") return found[1]
-    }
-    return ""
-  }
-
-  Process {
-    id: addressLookup
-    command: root.addressCommand
-    stdout: StdioCollector { id: addressOut }
-    stderr: StdioCollector {}
-    onExited: function (exitCode, exitStatus) {
-      var found = root.parseAddress(addressOut.text)
-      if (found === "" && root.addressSourceIndex < root.addressSources.length - 1) {
-        root.addressSourceIndex++
-        root.runAddressSource()
-        return
-      }
-      // "" is a real answer — looked up, nothing to show — so it is stored too.
-      root.storeAddress(root.addressDomain, found)
-    }
-  }
-
-  Process {
-    id: detail
-    command: root.detailCommand
-    stdout: StdioCollector {
-      onStreamFinished: root.applyDetail(text)
-    }
-    stderr: StdioCollector {}  // a failed read blanks the caption, nothing louder
-    onExited: function (exitCode, exitStatus) {
-      // A row expanded while this fetch was in flight; catch it up.
-      if (root.expandedDomain !== "" && root.details[root.key(root.expandedDomain)] === undefined)
-        root.fetchDetail(root.expandedDomain)
-    }
-  }
-
-  onExpandedDomainChanged: {
-    if (expandedDomain === "") return
-    if (details[key(expandedDomain)] === undefined) fetchDetail(expandedDomain)
-    if (addresses[key(expandedDomain)] === undefined && domainIsRunning(expandedDomain))
-      fetchAddress(expandedDomain)
-  }
-
-  function domainIsRunning(name) {
-    for (var i = 0; i < domains.length; i++)
-      if (domains[i].name === name) return domains[i].domainState === "running"
-    return false
   }
 
   // ---- Snapshots -------------------------------------------------------
@@ -744,7 +582,7 @@ BarWidget {
     active: root.popupOpen
     useActiveColor: false
     dimmed: root.runningCount === 0
-    tooltipText: root.summary
+    tooltipText: root.plain(root.summary)
     fixedWidth: root.vertical ? root.barSize : -1
     fixedHeight: root.vertical ? root.barSize : -1
 
@@ -763,6 +601,74 @@ BarWidget {
 
     onWheelMoved: function (delta) {
       root.refresh()
+    }
+  }
+
+  // ---- Action chip -----------------------------------------------------
+  // Icon plus label: PanelActionButton is icon-only and the host Ui tree is read-only.
+  component ActionChip: BorderSurface {
+    id: chip
+
+    property string iconText: ""
+    property string label: ""
+    property color foreground: Color.foreground
+    property color hoverColor: foreground
+    property string fontFamily: Style.font.family
+    // Armed half of arm-then-confirm: the chip wears the urgent colour and a border.
+    property bool accented: false
+
+    signal clicked()
+
+    implicitHeight: Math.max(Style.space(26), Style.font.icon + Style.spacing.md * 2)
+    radius: height / 2
+
+    readonly property bool hot: chipMouse.containsMouse && chip.enabled
+    readonly property color tint: accented ? hoverColor : foreground
+
+    color: hot ? Style.hoverFillFor(hoverColor, hoverColor) : Style.normalFillFor(foreground, Color.accent)
+    borderSpec: Border.controlSpec(hot || accented ? "hover-cursor" : "normal", tint, Color.accent)
+
+    Behavior on color { ColorAnimation { duration: 60 } }
+
+    // Centred as a pair: the chips are a grid, so a shared centre line reads calmer.
+    Row {
+      id: chipRow
+      anchors.centerIn: parent
+      spacing: Style.spacing.xs
+
+      // Elide against what the chip actually offers; the row itself hugs its content.
+      readonly property real labelRoom: chip.width - chip.borderLeft - chip.borderRight
+        - Style.spacing.md * 2 - chipIcon.width - chipRow.spacing
+
+      Text {
+        id: chipIcon
+        anchors.verticalCenter: parent.verticalCenter
+        textFormat: Text.PlainText
+        text: chip.iconText
+        color: chip.enabled ? chip.tint : Qt.darker(chip.foreground, 2.0)
+        font.family: chip.fontFamily
+        font.pixelSize: Style.font.icon
+      }
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        width: Math.min(implicitWidth, chipRow.labelRoom)
+        textFormat: Text.PlainText
+        elide: Text.ElideRight
+        text: chip.label
+        color: chip.enabled ? chip.tint : Qt.darker(chip.foreground, 2.0)
+        font.family: chip.fontFamily
+        font.pixelSize: Style.font.bodySmall
+      }
+    }
+
+    MouseArea {
+      id: chipMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      enabled: chip.enabled
+      cursorShape: chip.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+      onClicked: chip.clicked()
     }
   }
 
@@ -873,7 +779,7 @@ BarWidget {
 
           PanelToolTip {
             visible: connectionMouse.containsMouse
-            text: root.configuredUri
+            text: root.plain(root.configuredUri)
             fontFamily: popup.fontFamily
           }
         }
@@ -926,11 +832,13 @@ BarWidget {
           BorderSurface {
             id: frame
             width: parent.width
+            // The pane's own top margin is in the sum too, or the bottom edge clips.
             height: header.height + (row.expanded
-              ? detailPane.height + Style.spacing.sm + frame.borderTop * 2
+              ? detailPane.height + Style.spacing.xs + Style.spacing.sm + frame.borderTop * 2
               : 0)
-            radius: Style.cornerRadius
-            color: "transparent"
+            radius: root.configuredRadius
+            // Filled like Toggle at rest, so the name row and the chips read as one card.
+            color: row.expanded ? Style.normalFillFor(popup.foreground, Color.accent) : "transparent"
             borderSpec: row.expanded
               ? Border.flat(Qt.darker(popup.foreground, 1.8), Math.max(1, Style.space(1)))
               : Border.none()
@@ -943,7 +851,7 @@ BarWidget {
               anchors.right: parent.right
               anchors.margins: frame.borderTop
               height: Style.space(30)
-              radius: Style.cornerRadius
+              radius: root.configuredRadius
               color: rowMouse.containsMouse ? Style.hoverFill : "transparent"
 
               MouseArea {
@@ -1071,120 +979,82 @@ BarWidget {
             }
 
             // ---- Expanded detail ----------------------------------------
-            Column {
+            // Frame carries the fill; this is the layout box, inset to the dot's column.
+            Item {
               id: detailPane
               anchors.top: header.bottom
+              anchors.topMargin: Style.spacing.xs
               anchors.left: parent.left
               anchors.right: parent.right
-              anchors.leftMargin: Style.spacing.md + frame.borderLeft
-              anchors.rightMargin: Style.spacing.xs + frame.borderRight
+              anchors.leftMargin: frame.borderLeft
+              anchors.rightMargin: frame.borderRight
               visible: row.expanded
-              spacing: Style.spacing.xs
+              height: chipGrid.implicitHeight + Style.spacing.sm * 2
 
-              // The address is its own item so only it is clickable; "" means none found.
-              Row {
-                id: detailLine
-                width: parent.width
-                spacing: 0
+              // Positioners skip invisible children, so this reflows for 1..4 chips.
+              Grid {
+                id: chipGrid
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.margins: Style.spacing.sm
+                columns: 2
+                spacing: Style.spacing.xs
 
-                readonly property string spec: root.details[root.key(row.domainName)] || ""
-                readonly property string address: row.isRunning
-                  ? (root.addresses[root.key(row.domainName)] || "")
-                  : ""
+                readonly property real chipWidth: (width - spacing) / 2
 
-                Text {
-                  textFormat: Text.PlainText
-                  text: detailLine.spec
-                  color: Qt.darker(Color.popups.text, 1.4)
-                  font.family: popup.fontFamily
-                  font.pixelSize: Style.font.caption
-                }
-
-                Text {
-                  visible: detailLine.address !== "" && detailLine.spec !== ""
-                  textFormat: Text.PlainText
-                  text: "  ·  "
-                  color: Qt.darker(Color.popups.text, 1.4)
-                  font.family: popup.fontFamily
-                  font.pixelSize: Style.font.caption
-                }
-
-                Text {
-                  visible: detailLine.address !== ""
-                  textFormat: Text.PlainText
-                  text: detailLine.address
-                  color: addressMouse.containsMouse ? Color.accent : Qt.darker(Color.popups.text, 1.4)
-                  font.family: popup.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.underline: addressMouse.containsMouse
-
-                  MouseArea {
-                    id: addressMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.copyToClipboard(detailLine.address)
-
-                    PanelToolTip {
-                      visible: addressMouse.containsMouse
-                      text: root.copiedValue === detailLine.address ? "Copied" : "Copy IP"
-                      fontFamily: popup.fontFamily
-                    }
-                  }
-                }
-              }
-
-              Row {
-                spacing: Style.spacing.xxs
-
-                PanelActionButton {
+                ActionChip {
                   visible: row.isRunning
+                  width: chipGrid.chipWidth
                   iconText: "󰏤"
-                  tooltipText: "Pause"
+                  label: "Pause"
                   foreground: popup.foreground
                   fontFamily: popup.fontFamily
                   enabled: !root.busy
                   onClicked: root.runAction("suspend", row.domainName)
                 }
 
-                PanelActionButton {
+                ActionChip {
                   visible: row.isRunning
+                  width: chipGrid.chipWidth
                   iconText: "󰜉"
-                  tooltipText: "Reboot"
+                  label: "Reboot"
                   foreground: popup.foreground
                   fontFamily: popup.fontFamily
                   enabled: !root.busy
                   onClicked: root.runAction("reboot", row.domainName)
                 }
 
-                PanelActionButton {
+                ActionChip {
                   visible: !row.isOff
+                  width: chipGrid.chipWidth
                   iconText: "󰆓"
-                  tooltipText: "Save state"
+                  label: "Save state"
                   foreground: popup.foreground
                   fontFamily: popup.fontFamily
                   enabled: !root.busy
                   onClicked: root.runAction("managedsave", row.domainName)
                 }
 
-                PanelActionButton {
+                // The label carries the arm state, so no tooltip has to hold a second string.
+                ActionChip {
                   visible: row.isSaved
+                  width: chipGrid.chipWidth
                   iconText: "󰆴"
-                  tooltipText: row.armedDiscard
-                    ? "Click again to discard the saved state"
-                    : "Discard saved state"
-                  foreground: row.armedDiscard ? popup.urgent : popup.foreground
+                  label: row.armedDiscard ? "Click again" : "Discard"
+                  foreground: popup.foreground
                   hoverColor: popup.urgent
-                  bordered: row.armedDiscard
+                  accented: row.armedDiscard
                   fontFamily: popup.fontFamily
                   enabled: !root.busy
                   onClicked: root.discardSaved(row.domainName)
                 }
 
-                PanelActionButton {
+                ActionChip {
                   visible: root.configuredShowSnapshots
+                  width: chipGrid.chipWidth
                   iconText: "󰄄"
-                  tooltipText: "Snapshots"
+                  label: "Snapshots"
                   foreground: popup.foreground
                   fontFamily: popup.fontFamily
                   enabled: !root.busy
@@ -1217,6 +1087,8 @@ BarWidget {
 
         Toggle {
           width: parent.width
+          // Toggle hardcodes Style.cornerRadius; the floor is what keeps it off square.
+          radius: root.configuredRadius
           label: "Suppress qemu crash notifications"
           description: "Also silences a QEMU crash that happens mid-run."
           checked: root.configuredSuppressCrashToasts
@@ -1229,7 +1101,7 @@ BarWidget {
         BorderSurface {
           width: parent.width
           height: colorGroup.implicitHeight + Style.spacing.sm * 2
-          radius: Style.cornerRadius
+          radius: root.configuredRadius
           color: "transparent"
           borderSpec: Border.flat(Qt.darker(popup.foreground, 1.8), Math.max(1, Style.space(1)))
 
@@ -1291,6 +1163,14 @@ BarWidget {
                   placeholderText: "#rrggbb"
                   foreground: popup.foreground
                   font.family: popup.fontFamily
+
+                  // TextField keeps its radius on the background delegate, out of reach
+                  // of a plain override, so it is bound rather than the delegate replaced.
+                  Binding {
+                    target: colorField.background
+                    property: "radius"
+                    value: root.configuredRadius
+                  }
                   // Typing breaks the binding, so a rejected value is put back by hand.
                   onAccepted: {
                     if (!root.persistColor(colorRow.modelData.name, text))
@@ -1332,7 +1212,7 @@ BarWidget {
 
           width: snapshotView.width
           height: Style.space(30)
-          radius: Style.cornerRadius
+          radius: root.configuredRadius
           color: snapshotMouse.containsMouse ? Style.hoverFill : "transparent"
 
           MouseArea {
@@ -1461,7 +1341,7 @@ BarWidget {
       Rectangle {
         width: parent.width
         height: Style.space(28)
-        radius: Style.cornerRadius
+        radius: root.configuredRadius
         visible: root.configuredManager !== "" && root.listView
         color: managerMouse.containsMouse ? Style.hoverFill : "transparent"
 

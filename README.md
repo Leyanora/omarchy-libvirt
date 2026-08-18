@@ -5,10 +5,9 @@ a glyph, dimmed when nothing is running; the popup lists every domain on the
 connection with a state light, play/stop controls, and a click-to-open console.
 Expand a row for pause, reboot, save state and snapshots.
 
-It drives domains and nothing else: it never starts libvirt and never touches
-networks. It will show you a guest's IP address, but it never opens a connection
-to one. Creating, cloning and deleting domains stay with virt-manager, which the
-popup's footer opens.
+It drives domains and nothing else: it never starts libvirt, never touches
+networks, and never opens a connection to a guest. Creating, cloning and
+deleting domains stay with virt-manager, which the popup's footer opens.
 
 Claude code was heavily involved in the creation of this widget.
 
@@ -33,24 +32,8 @@ click or scroll to refresh.
 
 ### In the expanded row
 
-Expanding a row draws a border around it, so the name, its caption and its
-buttons read as one object; collapsing it takes the border away again.
-
-The caption line is vCPU count and memory, straight out of `virsh dominfo`, and
-then the guest's **IP address** when there is one to show. **Click the address
-to copy it** to the clipboard.
-
-The address is looked up with `virsh domifaddr`, trying `lease`, then `agent`,
-then `arp`, and taking the first non-loopback IPv4 any of them returns. Plenty
-of guests have none to give: a lease only exists on a libvirt-managed network,
-`agent` needs `qemu-guest-agent` running inside the guest, and under the default
-`qemu:///session` the agent is the only one of the three that can ever work. When
-none of them answers, the caption is just vCPU and memory — nothing is shown in
-its place. The address is re-read whenever the domain starts, since a lease
-arrives well after boot.
-
-The widget reads the address and copies it. It does not connect to a guest —
-there is no SSH or RDP button, by design.
+Expanding a row draws a border around it and fills it, so the name and its
+buttons read as one object; collapsing it takes both away again.
 
 - **Pause** (`virsh suspend`) freezes a running domain; the play arrow resumes
   it.
@@ -115,7 +98,6 @@ sudo pacman -S qemu-full libvirt virt-manager virt-viewer edk2-ovmf
 | `qemu-full` | The hypervisor, plus every guest architecture and its firmware |
 | `virt-viewer` | **Required for consoles** — it is what clicking a domain name opens |
 | `virt-manager` | Only the popup's footer button. Set `"manager": ""` to hide that row |
-| `wl-clipboard` | Only for copying a guest's IP — it provides `wl-copy` |
 | `edk2-ovmf` | UEFI firmware for guests. Optional, but a modern guest usually wants it |
 
 KVM needs no group membership on Arch — `/dev/kvm` is world-writable by udev
