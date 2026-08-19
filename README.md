@@ -33,7 +33,8 @@ click or scroll to refresh.
 ### In the expanded row
 
 Expanding a row draws a border around it and fills it, so the name and its
-buttons read as one object; collapsing it takes both away again.
+buttons read as one object; collapsing it takes both away again. The actions are
+a single line of icon pills — hover one to see what it does.
 
 - **Pause** (`virsh suspend`) freezes a running domain; the play arrow resumes
   it.
@@ -44,7 +45,8 @@ buttons read as one object; collapsing it takes both away again.
   and the play arrow becomes a **restore** arrow: starting it puts the guest
   back exactly where it was.
 - **Discard saved state** throws that memory image away, so the domain boots
-  cold next time. Two clicks, like force off.
+  cold next time. Two clicks, like force off — the armed pill turns red, and its
+  hover label says what the second click will do.
 - **Snapshots** opens the snapshot list for that domain.
 
 ### Snapshots
@@ -69,10 +71,16 @@ disk at all, `virsh` refuses and the popup shows you why.
 The cogwheel next to refresh opens a settings view, with the back arrow to
 return. It holds the settings worth changing from the bar rather than from a
 config file: [suppressing QEMU crash toasts](#silencing-the-shutdown-crash-toast),
-and, in a box of their own, the three **state light colours**. Type a hex value
-(`#rgb`, `#rrggbb` or `#aarrggbb`) and press Enter; anything else is refused with
-a message rather than being stored. The swatch beside each field shows the colour
-actually in effect.
+and, in a box of their own, the three **state light colours**. Each row shows a
+swatch, the value in effect, and a palette button that expands the row into a
+colour picker: drag in the saturation/value square, pick a hue on the strip
+below it, or click one of the preset swatches. The value is shown as hex and as
+R/G/B, and both are editable — type a hex value (`#rgb`, `#rrggbb` or
+`#aarrggbb`) and press Enter, and anything else is refused with a message rather
+than being stored. The circular arrow puts that one colour back to its default.
+
+Only the end of a drag is saved, so the state lights in the list settle when you
+let go while the picker itself tracks the pointer.
 
 Whatever you change here is written into the widget's `shell.json` entry, so it
 survives a restart; everything else in [Settings](#settings) below stays

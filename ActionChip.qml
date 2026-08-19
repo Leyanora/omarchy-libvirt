@@ -2,12 +2,12 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 
-// Icon plus label: PanelActionButton is icon-only and the host Ui tree is read-only.
+// A raised icon pill: PanelActionButton is flat at rest, and Ui/ is read-only.
 BorderSurface {
   id: chip
 
   property string iconText: ""
-  property string label: ""
+  property string tooltipText: ""
   property color foreground: Color.foreground
   property color hoverColor: foreground
   property string fontFamily: Style.font.family
@@ -17,6 +17,9 @@ BorderSurface {
   signal clicked()
 
   implicitHeight: Math.max(Style.space(26), Style.font.icon + Style.spacing.md * 2)
+  // Hugs its glyph, so a Row of them reflows without anyone counting the visible ones.
+  implicitWidth: Math.max(chip.implicitHeight,
+    chipIcon.implicitWidth + Style.spacing.md * 4 + chip.borderLeft + chip.borderRight)
   radius: height / 2
 
   readonly property bool hot: chipMouse.containsMouse && chip.enabled
@@ -27,36 +30,14 @@ BorderSurface {
 
   Behavior on color { ColorAnimation { duration: 60 } }
 
-  // Centred as a pair: the chips are a grid, so a shared centre line reads calmer.
-  Row {
-    id: chipRow
+  Text {
+    id: chipIcon
     anchors.centerIn: parent
-    spacing: Style.spacing.xs
-
-    // Elide against what the chip actually offers; the row itself hugs its content.
-    readonly property real labelRoom: chip.width - chip.borderLeft - chip.borderRight
-      - Style.spacing.md * 2 - chipIcon.width - chipRow.spacing
-
-    Text {
-      id: chipIcon
-      anchors.verticalCenter: parent.verticalCenter
-      textFormat: Text.PlainText
-      text: chip.iconText
-      color: chip.enabled ? chip.tint : Qt.darker(chip.foreground, 2.0)
-      font.family: chip.fontFamily
-      font.pixelSize: Style.font.icon
-    }
-
-    Text {
-      anchors.verticalCenter: parent.verticalCenter
-      width: Math.min(implicitWidth, chipRow.labelRoom)
-      textFormat: Text.PlainText
-      elide: Text.ElideRight
-      text: chip.label
-      color: chip.enabled ? chip.tint : Qt.darker(chip.foreground, 2.0)
-      font.family: chip.fontFamily
-      font.pixelSize: Style.font.bodySmall
-    }
+    textFormat: Text.PlainText
+    text: chip.iconText
+    color: chip.enabled ? chip.tint : Qt.darker(chip.foreground, 2.0)
+    font.family: chip.fontFamily
+    font.pixelSize: Style.font.icon
   }
 
   MouseArea {
@@ -66,5 +47,11 @@ BorderSurface {
     enabled: chip.enabled
     cursorShape: chip.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
     onClicked: chip.clicked()
+  }
+
+  PanelToolTip {
+    visible: chip.tooltipText !== "" && chipMouse.containsMouse
+    text: chip.tooltipText
+    fontFamily: chip.fontFamily
   }
 }

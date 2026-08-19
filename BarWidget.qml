@@ -16,6 +16,7 @@ BarWidget {
   property string expandedDomain: ""
   property string snapshotDomain: ""
   property bool settingsOpen: false
+  property string expandedColor: ""
 
   readonly property bool opened: popupOpen
 
@@ -36,6 +37,7 @@ BarWidget {
     expandedDomain = ""
     snapshotDomain = ""
     settingsOpen = false
+    expandedColor = ""
   }
 
   function togglePanel() {
@@ -58,6 +60,8 @@ BarWidget {
     service.clearArm()
     snapshotDomain = ""
     settingsOpen = true
+    // Entering settings always starts collapsed, however it was last left.
+    expandedColor = ""
   }
 
   // Back leaves whichever sub-view is open; the two are mutually exclusive.
@@ -155,6 +159,7 @@ BarWidget {
     settingsOpen: root.settingsOpen
     snapshotDomain: root.snapshotDomain
     expandedDomain: root.expandedDomain
+    expandedColor: root.expandedColor
 
     onBackRequested: root.goBack()
     onSettingsRequested: root.openSettings()
@@ -162,6 +167,9 @@ BarWidget {
     onConsoleRequested: function (name) { root.openConsole(name) }
     onExpandToggled: function (name) {
       root.expandedDomain = root.expandedDomain === name ? "" : name
+    }
+    onColorExpandToggled: function (name) {
+      root.expandedColor = root.expandedColor === name ? "" : name
     }
     onManagerRequested: {
       if (root.bar) root.bar.run(config.manager)

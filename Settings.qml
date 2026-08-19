@@ -62,6 +62,11 @@ QtObject {
       : (name === "colorPaused" ? colorPausedHex : colorStoppedHex)
   }
 
+  function defaultColorHex(name) {
+    return name === "colorRunning" ? defaultColorRunning
+      : (name === "colorPaused" ? defaultColorPaused : defaultColorStopped)
+  }
+
   function colorValue(name) {
     return name === "colorRunning" ? colorRunning
       : (name === "colorPaused" ? colorPaused : colorStopped)

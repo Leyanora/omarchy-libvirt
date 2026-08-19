@@ -14,6 +14,7 @@ PopupCard {
   property bool settingsOpen: false
   property string snapshotDomain: ""
   property string expandedDomain: ""
+  property string expandedColor: ""
 
   // Neither sub-view: list-view elements gate on this, not on the sub-views.
   readonly property bool listView: snapshotDomain === "" && !settingsOpen
@@ -23,6 +24,7 @@ PopupCard {
   signal snapshotsRequested(string name)
   signal consoleRequested(string name)
   signal expandToggled(string name)
+  signal colorExpandToggled(string name)
   signal managerRequested()
 
   // Wider in settings: Toggle elides its label and never wraps it.
@@ -175,6 +177,8 @@ PopupCard {
       foreground: popup.foreground
       fontFamily: popup.fontFamily
       radius: popup.config.radius
+      expandedColor: popup.expandedColor
+      onColorExpandToggled: function (name) { popup.colorExpandToggled(name) }
     }
 
     SnapshotView {

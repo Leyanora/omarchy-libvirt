@@ -201,25 +201,30 @@ Item {
       anchors.leftMargin: frame.borderLeft
       anchors.rightMargin: frame.borderRight
       visible: row.expanded
-      height: chipGrid.implicitHeight + Style.spacing.sm * 2
+      height: chips.implicitHeight + Style.spacing.sm * 2
 
       // Positioners skip invisible children, so this reflows for 1..4 chips.
-      Grid {
-        id: chipGrid
+      Row {
+        id: chips
         anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.margins: Style.spacing.sm
-        columns: 2
-        spacing: Style.spacing.xs
+        anchors.topMargin: Style.spacing.sm
+        anchors.horizontalCenter: parent.horizontalCenter
 
-        readonly property real chipWidth: (width - spacing) / 2
+        // Counted off the positioner, never off the state: a new chip needs nothing here.
+        readonly property int shown: {
+          var n = 0
+          for (var i = 0; i < chips.children.length; i++)
+            if (chips.children[i].visible) n++
+          return n
+        }
+
+        // A full set gets room to breathe; one or two read better kept together.
+        spacing: chips.shown > 3 ? Style.spacing.xxl : Style.spacing.xs
 
         ActionChip {
           visible: row.isRunning
-          width: chipGrid.chipWidth
           iconText: Interface.Glyph.pause
-          label: "Pause"
+          tooltipText: "Pause"
           foreground: row.foreground
           fontFamily: row.fontFamily
           enabled: !row.service.busy
@@ -228,9 +233,8 @@ Item {
 
         ActionChip {
           visible: row.isRunning
-          width: chipGrid.chipWidth
           iconText: Interface.Glyph.reboot
-          label: "Reboot"
+          tooltipText: "Reboot"
           foreground: row.foreground
           fontFamily: row.fontFamily
           enabled: !row.service.busy
@@ -239,21 +243,19 @@ Item {
 
         ActionChip {
           visible: !row.isOff
-          width: chipGrid.chipWidth
           iconText: Interface.Glyph.save
-          label: "Save state"
+          tooltipText: "Save state"
           foreground: row.foreground
           fontFamily: row.fontFamily
           enabled: !row.service.busy
           onClicked: row.service.runAction("managedsave", row.domainName)
         }
 
-        // The label carries the arm state, so no tooltip has to hold a second string.
+        // Only the accent shows the arm now, so the tooltip names what the second click does.
         ActionChip {
           visible: row.isSaved
-          width: chipGrid.chipWidth
           iconText: Interface.Glyph.discard
-          label: row.armedDiscard ? "Click again" : "Discard"
+          tooltipText: row.armedDiscard ? "Click again to discard" : "Discard"
           foreground: row.foreground
           hoverColor: row.urgent
           accented: row.armedDiscard
@@ -264,9 +266,8 @@ Item {
 
         ActionChip {
           visible: row.showSnapshots
-          width: chipGrid.chipWidth
           iconText: Interface.Glyph.snapshots
-          label: "Snapshots"
+          tooltipText: "Snapshots"
           foreground: row.foreground
           fontFamily: row.fontFamily
           enabled: !row.service.busy

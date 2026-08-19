@@ -25,7 +25,8 @@ var Glyph = {
   snapshots: "󰄄",
   revert: "󰑐",
   create: "󰐕",
-  manager: "󰍹"
+  manager: "󰍹",
+  palette: "󰏘"
 }
 
 function connectionLabel(down) {
