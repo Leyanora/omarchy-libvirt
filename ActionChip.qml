@@ -13,6 +13,8 @@ BorderSurface {
   property string fontFamily: Style.font.family
   // Armed half of arm-then-confirm: the chip wears the urgent colour and a border.
   property bool accented: false
+  // What is left of the disarm window, drawn along the bottom of the pill.
+  property real armFraction: 0
 
   signal clicked()
 
@@ -38,6 +40,11 @@ BorderSurface {
     color: chip.enabled ? chip.tint : Qt.darker(chip.foreground, 2.0)
     font.family: chip.fontFamily
     font.pixelSize: Style.font.icon
+  }
+
+  ArmProgress {
+    fraction: chip.accented ? chip.armFraction : 0
+    tint: chip.hoverColor
   }
 
   MouseArea {

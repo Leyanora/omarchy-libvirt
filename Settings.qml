@@ -56,6 +56,20 @@ QtObject {
   readonly property color colorStopped: colorStoppedHex
 
   readonly property var colorSettings: Config.COLOR_SETTINGS
+  readonly property var behaviourSettings: Config.BEHAVIOUR_SETTINGS
+  readonly property var connectionOptions: Config.connectionOptions(uri)
+
+  // Same shape as colorHex below: one getter, so the view stays a Repeater.
+  function flag(name) {
+    switch (name) {
+      case "showCount": return showCount
+      case "showSnapshots": return showSnapshots
+      case "confirmForceOff": return confirmForceOff
+      case "confirmDiscardSaved": return confirmDiscardSaved
+      case "confirmSnapshotRevert": return confirmSnapshotRevert
+    }
+    return false
+  }
 
   function colorHex(name) {
     return name === "colorRunning" ? colorRunningHex
@@ -84,6 +98,21 @@ QtObject {
     } else {
       config.error = "could not save: the shell did not expose updateEntryInline"
     }
+  }
+
+  // Allowlisted before it is stored, because this value ends up in every virsh call.
+  function persistUri(value) {
+    if (!Config.isKnownUri(config.connectionOptions, value)) {
+      config.error = "not a listed connection URI"
+      return
+    }
+    config.error = ""
+    persist("uri", value)
+  }
+
+  function persistInterval(value) {
+    config.error = ""
+    persist("interval", Math.max(2, Math.min(300, Math.round(Number(value) || 10))))
   }
 
   function persistColor(name, text) {
