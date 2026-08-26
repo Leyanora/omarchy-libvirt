@@ -16,7 +16,9 @@ Claude code was heavily involved in the creation of this widget.
 ## Using it
 
 Left click the bar item for the popup, right click to open virt-manager, middle
-click or scroll to refresh.
+click or scroll to refresh. The glyph turns **amber** while a domain is
+suspended and **red** while the connection is down; its tooltip names what is
+running.
 
 - **Green** running, **amber** paused, **red** shut off. A row only shows the
   buttons its state allows.
@@ -29,6 +31,33 @@ click or scroll to refresh.
 - **Clicking a domain's name** opens its console in `virt-viewer`, only while
   the domain is up.
 - **The chevron** expands the row for everything else.
+- **A shutdown the guest ignores** turns the lightning bolt red after twenty
+  seconds, and its tooltip says how long it has been waiting. `virsh shutdown`
+  is only a request, and until now a guest with no ACPI handler looked exactly
+  like a button that did nothing.
+- **With eight or more domains** a filter field appears above the list.
+
+### Keyboard
+
+The popup takes keyboard focus, so it can be driven without the mouse — bind
+`omarchy-shell leyanora.libvirt toggle` and never touch the pointer.
+
+| Key | Does |
+|---|---|
+| `↑` `↓`, `k` `j` | Move the row cursor |
+| `→` `←`, `l` `h` | Expand and collapse the row |
+| `Enter`, `Space` | Start, resume or shut down — whichever the row's state means |
+| `x` | Force off, or delete a snapshot. Still takes the second press |
+| `s` | Snapshots for the row |
+| `c` | Console for the row |
+| `r` | Refresh |
+| `,` | Settings |
+| `/` | Jump to the filter field |
+| `Tab` | Step through the settings controls |
+| `Esc` | Leave the field, then the sub-view, then the popup |
+
+The cursor is shared with the mouse: hovering a row moves it, so there is only
+ever one highlight on screen.
 
 ### In the expanded row
 
@@ -49,12 +78,22 @@ a single line of icon pills — hover one to see what it does.
   hover label says what the second click will do.
 - **Snapshots** opens the snapshot list for that domain.
 
+Above the pills, the row reports the domain's **vCPU count and memory**, and for
+a domain that is off, **why** — `crashed`, `destroyed` or `shutdown`. Those come
+from `virsh dominfo` and `virsh domstate --reason`, asked only when the row is
+expanded, never on the poll tick.
+
 ### Snapshots
 
-The back arrow returns to the domain list. Each snapshot has **revert** and
-**delete**; both take two clicks, because reverting throws away everything the
-domain has done since the snapshot was taken. The field at the bottom takes a
-snapshot — leave the name empty and libvirt names it after the epoch second.
+The back arrow returns to the domain list. A check mark against a name is the
+**current** snapshot — the one the domain is sitting on. Each snapshot has
+**revert** and **delete**; both take two clicks, because reverting throws away
+everything the domain has done since the snapshot was taken. The armed button
+draws the four-second window down as a bar, so the second click is not on a
+hidden timer.
+
+The two fields at the bottom take a snapshot: an optional description, and the
+name — leave the name empty and libvirt names it after the epoch second.
 
 Typed names are tidied first: whitespace and `/` collapse to single hyphens and
 surrounding whitespace is dropped, so `my snap` is stored as `my-snap`. libvirt
@@ -70,8 +109,19 @@ disk at all, `virsh` refuses and the popup shows you why.
 
 The cogwheel next to refresh opens a settings view, with the back arrow to
 return. It holds the settings worth changing from the bar rather than from a
-config file: [suppressing QEMU crash toasts](#silencing-the-shutdown-crash-toast),
-and, in a box of their own, the three **state light colours**. Each row shows a
+config file, in three boxes.
+
+**Connection** — the libvirt URI, as a picker between `qemu:///session` and
+`qemu:///system` (plus whatever you hand-edited into `shell.json`, if it is
+neither), and the poll interval. Switching connection empties the list and
+re-polls; the widget still never *starts* libvirt, so a connection that is not
+running comes back Disconnected.
+
+**Behaviour** — the running count on the bar glyph, the snapshot button in the
+expanded row, the three confirm switches, and
+[suppressing QEMU crash toasts](#silencing-the-shutdown-crash-toast).
+
+**State light colours** — the three lights. Each colour row shows a
 swatch, the value in effect, and a palette button that expands the row into a
 colour picker: drag in the saturation/value square, pick a hue on the strip
 below it, or click one of the preset swatches. The value is shown as hex and as
@@ -84,7 +134,8 @@ let go while the picker itself tracks the pointer.
 
 Whatever you change here is written into the widget's `shell.json` entry, so it
 survives a restart; everything else in [Settings](#settings) below stays
-hand-edited.
+hand-edited. The URI is the one value the picker will not let you type: it ends
+up in every `virsh` call, so it is chosen from a list rather than entered.
 
 Under the title: **Connected** when libvirt answered the last poll,
 **Disconnected** in red with the error below it when it did not. The URI is on
@@ -232,14 +283,14 @@ by the plugin id — not the display name:
 
 | Key | Default | What it does |
 |---|---|---|
-| `uri` | `qemu:///session` | libvirt connection URI |
-| `interval` | `10` | Poll seconds; floored at 2 |
+| `uri` | `qemu:///session` | libvirt connection URI. Also selectable from the cogwheel |
+| `interval` | `10` | Poll seconds; floored at 2. Also editable from the cogwheel |
 | `icon` | `󰒋` | Bar glyph |
-| `showCount` | `false` | Show the running count next to the glyph |
-| `confirmForceOff` | `true` | Require the second click on force off |
-| `confirmDiscardSaved` | `true` | Require the second click on discard saved state |
-| `confirmSnapshotRevert` | `true` | Require the second click on snapshot revert and delete |
-| `showSnapshots` | `true` | Show the snapshots button in the expanded row |
+| `showCount` | `false` | Show the running count next to the glyph. Also editable from the cogwheel |
+| `confirmForceOff` | `true` | Require the second click on force off. Also editable from the cogwheel |
+| `confirmDiscardSaved` | `true` | Require the second click on discard saved state. Also editable from the cogwheel |
+| `confirmSnapshotRevert` | `true` | Require the second click on snapshot revert and delete. Also editable from the cogwheel |
+| `showSnapshots` | `true` | Show the snapshots button in the expanded row. Also editable from the cogwheel |
 | `console` | `virt-viewer --connect {uri} {name}` | Console command; `{uri}` and `{name}` are substituted shell-quoted |
 | `manager` | `virt-manager -c <uri>` | The popup's footer action; `""` hides the row |
 | `onRightClick` | same as `manager` | Right click on the bar item |
@@ -257,6 +308,10 @@ omarchy-shell leyanora.libvirt refresh    # re-poll on every monitor
 ```
 
 Bind either in `~/.config/hypr/bindings.lua`.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

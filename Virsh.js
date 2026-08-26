@@ -82,6 +82,29 @@ function parsePoll(text) {
   return { error: "", domains: list, running: running, paused: paused }
 }
 
+// True when two poll results render identically, so `domains` is not reassigned.
+// A JS-array model rebuilds every delegate on assignment; without this the list
+// churned on every tick and no row-level animation could survive a poll.
+function sameDomains(a, b) {
+  if (!a || !b || a.length !== b.length) return false
+  for (var i = 0; i < a.length; i++) {
+    if (a[i].name !== b[i].name) return false
+    if (a[i].domainState !== b[i].domainState) return false
+    if (a[i].saved !== b[i].saved) return false
+  }
+  return true
+}
+
+// Case-insensitive substring over the already-polled list; no virsh call.
+function filterDomains(domains, query) {
+  var needle = String(query === undefined || query === null ? "" : query).trim().toLowerCase()
+  if (needle === "") return domains
+  var out = []
+  for (var i = 0; i < domains.length; i++)
+    if (String(domains[i].name).toLowerCase().indexOf(needle) >= 0) out.push(domains[i])
+  return out
+}
+
 // Empty lines dropped, nothing else: revert/delete must match libvirt exactly.
 function parseSnapshotList(text) {
   var found = []
@@ -115,11 +138,65 @@ function snapshotListArgv(uri, domain) {
   return ["virsh", "-c", uri, "-q", "snapshot-list", domain, "--name"]
 }
 
-function snapshotCreateArgv(uri, domain, name) {
+function snapshotCreateArgv(uri, domain, name, description) {
   var argv = ["virsh", "-c", uri, "snapshot-create-as", "--domain", domain]
   var clean = cleanSnapshotName(name)
   // Empty, or sanitised away to nothing, gets libvirt's automatic name.
-  return clean === "" ? argv : argv.concat(["--name", clean])
+  if (clean !== "") argv = argv.concat(["--name", clean])
+  // Free text libvirt stores verbatim, so it is passed through uncleaned.
+  var note = String(description === undefined || description === null ? "" : description).trim()
+  return note === "" ? argv : argv.concat(["--description", note])
+}
+
+function snapshotCurrentArgv(uri, domain) {
+  return ["virsh", "-c", uri, "-q", "snapshot-current", domain, "--name"]
+}
+
+// One line, or virsh's error on stderr — which never reaches this parser.
+function parseSnapshotCurrent(text) {
+  var lines = String(text || "").split("\n")
+  for (var i = 0; i < lines.length; i++)
+    if (lines[i] !== "") return lines[i]
+  return ""
+}
+
+function domInfoArgv(uri, domain) {
+  return ["virsh", "-c", uri, "dominfo", domain]
+}
+
+function domStateArgv(uri, domain) {
+  return ["virsh", "-c", uri, "domstate", domain, "--reason"]
+}
+
+// dominfo is a `Field: value` table; only the two fields the row renders are kept.
+function parseDomInfo(text) {
+  var detail = { cpus: 0, memory: "" }
+  var lines = String(text || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var at = lines[i].indexOf(":")
+    if (at < 0) continue
+    var field = lines[i].substring(0, at).trim()
+    var value = lines[i].substring(at + 1).trim()
+    if (field === "CPU(s)") detail.cpus = parseInt(value, 10) || 0
+    else if (field === "Max memory") detail.memory = formatKiB(parseInt(value, 10))
+  }
+  return detail
+}
+
+// `shut off (destroyed)` — the reason in parentheses is the half worth showing, and
+// libvirt says `unknown` whenever it has none, which is worth less than a blank.
+function parseDomState(text) {
+  var found = /\(([^)]*)\)\s*$/.exec(lastLine(text))
+  var reason = found ? found[1] : ""
+  return reason === "unknown" ? "" : reason
+}
+
+// libvirt reports memory in KiB; a row has no space for seven digits of it.
+function formatKiB(kib) {
+  var mib = Number(kib) / 1024
+  if (!(mib > 0)) return ""
+  if (mib >= 1024) return (Math.round(mib / 102.4) / 10) + " GiB"
+  return Math.round(mib) + " MiB"
 }
 
 function snapshotRevertArgv(uri, domain, name) {

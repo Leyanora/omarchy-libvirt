@@ -7,6 +7,43 @@ var COLOR_SETTINGS = [
   { name: "colorStopped", label: "Shut off" }
 ]
 
+// The connection picker is an allowlist: a URI reaches virsh only by being one
+// of these, or by already being the hand-edited value in the entry.
+var CONNECTION_OPTIONS = [
+  { value: "qemu:///session", label: "Session — this user" },
+  { value: "qemu:///system", label: "System — host-wide" }
+]
+
+// The booleans the settings view offers, in the order it lists them.
+var BEHAVIOUR_SETTINGS = [
+  { name: "showCount", label: "Show the running count",
+    description: "Puts the number of running domains next to the bar glyph." },
+  { name: "showSnapshots", label: "Snapshot button in the expanded row",
+    description: "" },
+  { name: "confirmForceOff", label: "Confirm force off",
+    description: "Force off discards unwritten guest state." },
+  { name: "confirmDiscardSaved", label: "Confirm discarding saved state",
+    description: "" },
+  { name: "confirmSnapshotRevert", label: "Confirm snapshot revert and delete",
+    description: "" }
+]
+
+// Options plus the current value, so a hand-edited URI stays selectable.
+function connectionOptions(current) {
+  var out = CONNECTION_OPTIONS.slice()
+  for (var i = 0; i < out.length; i++)
+    if (out[i].value === current) return out
+  out.push({ value: current, label: current })
+  return out
+}
+
+// Checked before persisting: nothing but a listed URI may reach a virsh call.
+function isKnownUri(options, value) {
+  for (var i = 0; i < options.length; i++)
+    if (options[i].value === value) return true
+  return false
+}
+
 function read(entry, name, fallback) {
   var value = entry ? entry[name] : undefined
   return value === undefined || value === null ? fallback : value

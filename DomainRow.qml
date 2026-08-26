@@ -23,9 +23,13 @@ Item {
   property bool showSnapshots: true
   property bool consoleEnabled: true
 
+  // Keyboard and mouse share one highlight, so the row never paints from hover.
+  property bool hasCursor: false
+
   signal consoleRequested(string name)
   signal snapshotsRequested(string name)
   signal expandToggled(string name)
+  signal cursorRequested(string name)
 
   readonly property string domainName: row.modelData.name
   readonly property string domainState: row.modelData.domainState
@@ -36,6 +40,13 @@ Item {
   readonly property bool armedForceOff: row.service.isArmed("destroy", row.domainName, "")
   readonly property bool armedDiscard: row.service.isArmed("managedsave-remove", row.domainName, "")
   readonly property bool working: row.service.busy && row.service.busyDomain === row.domainName
+  readonly property bool canConsole: !row.isOff && row.consoleEnabled
+
+  // The clock is passed in so this binding depends on it and re-counts each second.
+  readonly property int shutdownWaited: row.isRunning
+    ? row.service.waitedFor(row.domainName, row.service.clock)
+    : 0
+  readonly property bool stalled: row.shutdownWaited >= Interface.STALL_AFTER
 
   width: ListView.view.width
   height: frame.height
@@ -55,7 +66,12 @@ Item {
       ? Border.flat(Qt.darker(row.foreground, 1.8), Math.max(1, Style.space(1)))
       : Border.none()
 
-    // Hover fill belongs to the header, not the whole delegate.
+    // The card grows into its chips rather than snapping open under the cursor.
+    Behavior on height {
+      NumberAnimation { duration: 130; easing.type: Easing.OutCubic }
+    }
+
+    // Cursor fill belongs to the header, not the whole delegate.
     Rectangle {
       id: header
       anchors.top: parent.top
@@ -64,13 +80,15 @@ Item {
       anchors.margins: frame.borderTop
       height: Style.space(30)
       radius: row.radius
-      color: rowMouse.containsMouse ? Style.hoverFill : "transparent"
+      color: row.hasCursor ? Style.hoverFill : "transparent"
+
+      Behavior on color { ColorAnimation { duration: 60 } }
 
       MouseArea {
-        id: rowMouse
         anchors.fill: parent
         hoverEnabled: true
         acceptedButtons: Qt.NoButton
+        onContainsMouseChanged: if (containsMouse) row.cursorRequested(row.domainName)
       }
 
       Rectangle {
@@ -101,6 +119,7 @@ Item {
       }
 
       Text {
+        id: nameText
         anchors.left: dot.right
         anchors.leftMargin: Style.spacing.md
         anchors.right: actions.left
@@ -109,23 +128,24 @@ Item {
         textFormat: Text.PlainText
         elide: Text.ElideRight
         text: row.domainName
-        color: nameMouse.containsMouse ? Color.accent : Color.popups.text
+        color: nameMouse.containsMouse && row.canConsole ? Color.accent : Color.popups.text
         opacity: row.isOff ? 0.6 : 1.0
         font.family: row.fontFamily
         font.pixelSize: Style.font.body
-        font.underline: nameMouse.containsMouse
+        font.underline: nameMouse.containsMouse && row.canConsole
 
+        // Hover is live even on a shut off row: an elided name is worth reading back.
         MouseArea {
           id: nameMouse
           anchors.fill: parent
           hoverEnabled: true
-          enabled: !row.isOff && row.consoleEnabled
-          cursorShape: Qt.PointingHandCursor
+          cursorShape: row.canConsole ? Qt.PointingHandCursor : Qt.ArrowCursor
+          acceptedButtons: row.canConsole ? Qt.LeftButton : Qt.NoButton
           onClicked: row.consoleRequested(row.domainName)
 
           PanelToolTip {
-            visible: nameMouse.containsMouse
-            text: "Open console"
+            visible: nameMouse.containsMouse && text !== ""
+            text: Interface.nameTooltip(row.domainName, nameText.truncated, row.canConsole)
             fontFamily: row.fontFamily
           }
         }
@@ -168,16 +188,24 @@ Item {
           onClicked: row.service.runAction("shutdown", row.domainName)
         }
 
+        // Bordered while a shutdown goes unanswered: the escalation the user wants next.
         PanelActionButton {
           visible: !row.isOff
           iconText: Interface.Glyph.forceOff
-          tooltipText: row.armedForceOff ? "Click again to force off" : "Force off"
-          foreground: row.armedForceOff ? row.urgent : row.foreground
+          tooltipText: row.armedForceOff
+            ? "Click again to force off"
+            : (row.stalled ? Interface.stalledTooltip(row.shutdownWaited) : "Force off")
+          foreground: row.armedForceOff || row.stalled ? row.urgent : row.foreground
           hoverColor: row.urgent
-          bordered: row.armedForceOff
+          bordered: row.armedForceOff || row.stalled
           fontFamily: row.fontFamily
           enabled: !row.service.busy
           onClicked: row.service.forceOff(row.domainName)
+
+          ArmProgress {
+            fraction: row.armedForceOff ? row.service.armFraction : 0
+            tint: row.urgent
+          }
         }
 
         PanelActionButton {
@@ -191,7 +219,7 @@ Item {
     }
 
     // ---- Expanded detail ----------------------------------------
-    // Frame carries the fill; this is the layout box, inset to the dot's column.
+    // Frame carries the fill; this is the layout box, inset to the state dot's column.
     Item {
       id: detailPane
       anchors.top: header.bottom
@@ -201,12 +229,30 @@ Item {
       anchors.leftMargin: frame.borderLeft
       anchors.rightMargin: frame.borderRight
       visible: row.expanded
-      height: chips.implicitHeight + Style.spacing.sm * 2
+      height: chips.implicitHeight + detailLine.height + Style.spacing.sm * 2
+
+      // Empty until both probes answer, and it keeps its row so the chips do not jump.
+      Text {
+        id: detailLine
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: Style.spacing.sm
+        anchors.rightMargin: Style.spacing.sm
+        height: implicitHeight
+        horizontalAlignment: Text.AlignHCenter
+        textFormat: Text.PlainText
+        elide: Text.ElideRight
+        text: row.expanded ? Interface.detailLine(row.service.detail, row.service.detailReason) : ""
+        color: Qt.darker(Color.popups.text, 1.4)
+        font.family: row.fontFamily
+        font.pixelSize: Style.font.caption
+      }
 
       // Positioners skip invisible children, so this reflows for 1..4 chips.
       Row {
         id: chips
-        anchors.top: parent.top
+        anchors.top: detailLine.bottom
         anchors.topMargin: Style.spacing.sm
         anchors.horizontalCenter: parent.horizontalCenter
 
@@ -259,6 +305,7 @@ Item {
           foreground: row.foreground
           hoverColor: row.urgent
           accented: row.armedDiscard
+          armFraction: row.service.armFraction
           fontFamily: row.fontFamily
           enabled: !row.service.busy
           onClicked: row.service.discardSaved(row.domainName)

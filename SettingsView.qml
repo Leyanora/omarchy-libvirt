@@ -3,7 +3,7 @@ import qs.Commons
 import qs.Ui
 import "Interface.js" as Interface
 
-// The settings view: the crash-toast switch, and the three state-light colours.
+// The settings view: connection, the behaviour switches, and the state-light colours.
 Column {
   id: settingsView
 
@@ -16,172 +16,225 @@ Column {
   property string expandedColor: ""
 
   signal colorExpandToggled(string name)
+  // Focus is handed back explicitly: dropping it would leave no item holding keys.
+  signal keysReleased()
 
   width: parent.width
   spacing: Style.spacing.sm
 
-  Toggle {
+  // Escape propagates up from whichever control holds the keys, and hands them back.
+  Keys.onEscapePressed: settingsView.keysReleased()
+
+  SettingsGroup {
     width: parent.width
-    // Toggle hardcodes Style.cornerRadius; the floor is what keeps it off square.
     radius: settingsView.radius
-    label: "Suppress qemu crash notifications"
-    description: "Also silences a QEMU crash that happens mid-run."
-    checked: settingsView.config.suppressCrashToasts
+    title: "Connection"
     foreground: settingsView.foreground
     fontFamily: settingsView.fontFamily
-    onClicked: settingsView.config.persist("suppressCrashToasts", !settingsView.config.suppressCrashToasts)
+
+    // An allowlist, not a text field: this value ends up in every virsh call.
+    Dropdown {
+      id: connection
+      width: parent.width
+      label: "libvirt URI"
+      value: settingsView.config.uri
+      options: settingsView.config.connectionOptions
+      foreground: Color.popups.text
+      accent: Color.accent
+      fontFamily: settingsView.fontFamily
+      onChanged: function (value) { settingsView.config.persistUri(value) }
+    }
+
+    NumberField {
+      label: "Poll seconds"
+      value: settingsView.config.interval
+      from: 2
+      to: 300
+      foreground: settingsView.foreground
+      accent: Color.accent
+      fontFamily: settingsView.fontFamily
+      onModified: function (value) { settingsView.config.persistInterval(value) }
+    }
   }
 
-  // Boxed off: three parts of one setting, which bare rows would not read as.
-  BorderSurface {
+  SettingsGroup {
     width: parent.width
-    height: colorGroup.implicitHeight + Style.spacing.sm * 2
     radius: settingsView.radius
-    color: "transparent"
-    borderSpec: Border.flat(Qt.darker(settingsView.foreground, 1.8), Math.max(1, Style.space(1)))
+    title: "Behaviour"
+    foreground: settingsView.foreground
+    fontFamily: settingsView.fontFamily
 
-    Column {
-      id: colorGroup
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.top: parent.top
-      anchors.margins: Style.spacing.sm
-      spacing: Style.spacing.xs
+    Repeater {
+      model: settingsView.config.behaviourSettings
 
-      PanelSectionHeader {
-        text: "State light colours"
+      delegate: Toggle {
+        required property var modelData
+
+        width: parent.width
+        // Toggle hardcodes Style.cornerRadius; the floor is what keeps it off square.
+        radius: settingsView.radius
+        label: modelData.label
+        description: modelData.description
+        checked: settingsView.config.flag(modelData.name)
         foreground: settingsView.foreground
         fontFamily: settingsView.fontFamily
+        onClicked: settingsView.config.persist(modelData.name,
+          !settingsView.config.flag(modelData.name))
       }
+    }
 
-      Repeater {
-        model: settingsView.config.colorSettings
+    Toggle {
+      width: parent.width
+      radius: settingsView.radius
+      label: "Suppress qemu crash notifications"
+      description: "Also silences a QEMU crash that happens mid-run."
+      checked: settingsView.config.suppressCrashToasts
+      foreground: settingsView.foreground
+      fontFamily: settingsView.fontFamily
+      onClicked: settingsView.config.persist("suppressCrashToasts",
+        !settingsView.config.suppressCrashToasts)
+    }
+  }
 
-        delegate: Item {
-          id: colorRow
-          required property var modelData
+  SettingsGroup {
+    width: parent.width
+    radius: settingsView.radius
+    title: "State light colours"
+    foreground: settingsView.foreground
+    fontFamily: settingsView.fontFamily
 
-          readonly property string colorName: colorRow.modelData.name
-          readonly property bool expanded: settingsView.expandedColor === colorRow.colorName
+    Repeater {
+      model: settingsView.config.colorSettings
 
-          width: colorGroup.width
-          height: frame.height
+      delegate: Item {
+        id: colorRow
+        required property var modelData
 
-          // Seeded on expand, never bound: hue has to survive a drag to grey.
-          function seed() {
-            if (colorRow.expanded)
-              picker.setFrom(settingsView.config.colorValue(colorRow.colorName))
+        readonly property string colorName: colorRow.modelData.name
+        readonly property bool expanded: settingsView.expandedColor === colorRow.colorName
+
+        width: parent.width
+        height: frame.height
+
+        // Seeded on expand, never bound: hue has to survive a drag to grey.
+        function seed() {
+          if (colorRow.expanded)
+            picker.setFrom(settingsView.config.colorValue(colorRow.colorName))
+        }
+
+        onExpandedChanged: seed()
+        Component.onCompleted: seed()
+
+        // The border is what makes an expanded row read as one object.
+        BorderSurface {
+          id: frame
+          width: parent.width
+          // The pane's own top margin is in the sum too, or the bottom edge clips.
+          height: header.height + (colorRow.expanded
+            ? pickerPane.height + Style.spacing.xs + Style.spacing.sm + frame.borderTop * 2
+            : 0)
+          radius: settingsView.radius
+          // Filled like Toggle at rest, so the header and the picker read as one card.
+          color: colorRow.expanded
+            ? Style.normalFillFor(settingsView.foreground, Color.accent)
+            : "transparent"
+          borderSpec: colorRow.expanded
+            ? Border.flat(Qt.darker(settingsView.foreground, 1.8), Math.max(1, Style.space(1)))
+            : Border.none()
+
+          // The card grows into the picker rather than snapping open under the cursor.
+          Behavior on height {
+            NumberAnimation { duration: 130; easing.type: Easing.OutCubic }
           }
 
-          onExpandedChanged: seed()
-          Component.onCompleted: seed()
+          Item {
+            id: header
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.margins: frame.borderTop
+            height: Math.max(Style.space(26), paletteButton.implicitHeight)
 
-          // The border is what makes an expanded row read as one object.
-          BorderSurface {
-            id: frame
-            width: parent.width
-            // The pane's own top margin is in the sum too, or the bottom edge clips.
-            height: header.height + (colorRow.expanded
-              ? pickerPane.height + Style.spacing.xs + Style.spacing.sm + frame.borderTop * 2
-              : 0)
-            radius: settingsView.radius
-            // Filled like Toggle at rest, so the header and the picker read as one card.
-            color: colorRow.expanded
-              ? Style.normalFillFor(settingsView.foreground, Color.accent)
-              : "transparent"
-            borderSpec: colorRow.expanded
-              ? Border.flat(Qt.darker(settingsView.foreground, 1.8), Math.max(1, Style.space(1)))
-              : Border.none()
-
-            Item {
-              id: header
-              anchors.top: parent.top
+            Rectangle {
+              id: swatch
               anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.margins: frame.borderTop
-              height: Math.max(Style.space(26), paletteButton.implicitHeight)
-
-              Rectangle {
-                id: swatch
-                anchors.left: parent.left
-                anchors.leftMargin: Style.spacing.xs
-                anchors.verticalCenter: parent.verticalCenter
-                width: Style.space(12)
-                height: width
-                radius: width / 2
-                // Follows the drag while open; the persisted value only lands on release.
-                color: colorRow.expanded
-                  ? picker.current
-                  : settingsView.config.colorValue(colorRow.colorName)
-              }
-
-              Text {
-                id: colorLabel
-                anchors.left: swatch.right
-                anchors.leftMargin: Style.spacing.sm
-                anchors.verticalCenter: parent.verticalCenter
-                width: Style.space(64)
-                textFormat: Text.PlainText
-                elide: Text.ElideRight
-                text: colorRow.modelData.label
-                color: Color.popups.text
-                font.family: settingsView.fontFamily
-                font.pixelSize: Style.font.bodySmall
-              }
-
-              Text {
-                anchors.left: colorLabel.right
-                anchors.leftMargin: Style.spacing.sm
-                anchors.right: paletteButton.left
-                anchors.rightMargin: Style.spacing.sm
-                anchors.verticalCenter: parent.verticalCenter
-                textFormat: Text.PlainText
-                elide: Text.ElideRight
-                text: colorRow.expanded
-                  ? picker.currentHex
-                  : settingsView.config.colorHex(colorRow.colorName)
-                color: Qt.darker(Color.popups.text, 1.3)
-                font.family: settingsView.fontFamily
-                font.pixelSize: Style.font.bodySmall
-              }
-
-              PanelActionButton {
-                id: paletteButton
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                iconText: Interface.Glyph.palette
-                tooltipText: colorRow.expanded ? "Close picker" : "Pick a colour"
-                foreground: settingsView.foreground
-                fontFamily: settingsView.fontFamily
-                bordered: colorRow.expanded
-                onClicked: settingsView.colorExpandToggled(colorRow.colorName)
-              }
+              anchors.leftMargin: Style.spacing.xs
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(12)
+              height: width
+              radius: width / 2
+              // Follows the drag while open; the persisted value only lands on release.
+              color: colorRow.expanded
+                ? picker.current
+                : settingsView.config.colorValue(colorRow.colorName)
             }
 
-            // Frame carries the fill; this is the layout box the picker sits in.
-            Item {
-              id: pickerPane
-              anchors.top: header.bottom
-              anchors.topMargin: Style.spacing.xs
+            Text {
+              id: colorLabel
+              anchors.left: swatch.right
+              anchors.leftMargin: Style.spacing.sm
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(64)
+              textFormat: Text.PlainText
+              elide: Text.ElideRight
+              text: colorRow.modelData.label
+              color: Color.popups.text
+              font.family: settingsView.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Text {
+              anchors.left: colorLabel.right
+              anchors.leftMargin: Style.spacing.sm
+              anchors.right: paletteButton.left
+              anchors.rightMargin: Style.spacing.sm
+              anchors.verticalCenter: parent.verticalCenter
+              textFormat: Text.PlainText
+              elide: Text.ElideRight
+              text: colorRow.expanded
+                ? picker.currentHex
+                : settingsView.config.colorHex(colorRow.colorName)
+              color: Qt.darker(Color.popups.text, 1.3)
+              font.family: settingsView.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            PanelActionButton {
+              id: paletteButton
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              iconText: Interface.Glyph.palette
+              tooltipText: colorRow.expanded ? "Close picker" : "Pick a colour"
+              foreground: settingsView.foreground
+              fontFamily: settingsView.fontFamily
+              bordered: colorRow.expanded
+              onClicked: settingsView.colorExpandToggled(colorRow.colorName)
+            }
+          }
+
+          // Frame carries the fill; this is the layout box the picker sits in.
+          Item {
+            id: pickerPane
+            anchors.top: header.bottom
+            anchors.topMargin: Style.spacing.xs
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: frame.borderLeft
+            anchors.rightMargin: frame.borderRight
+            visible: colorRow.expanded
+            height: picker.implicitHeight + Style.spacing.sm * 2
+
+            ColorPicker {
+              id: picker
               anchors.left: parent.left
               anchors.right: parent.right
-              anchors.leftMargin: frame.borderLeft
-              anchors.rightMargin: frame.borderRight
-              visible: colorRow.expanded
-              height: picker.implicitHeight + Style.spacing.sm * 2
-
-              ColorPicker {
-                id: picker
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.margins: Style.spacing.sm
-                config: settingsView.config
-                colorName: colorRow.colorName
-                foreground: settingsView.foreground
-                fontFamily: settingsView.fontFamily
-                radius: settingsView.radius
-              }
+              anchors.top: parent.top
+              anchors.margins: Style.spacing.sm
+              config: settingsView.config
+              colorName: colorRow.colorName
+              foreground: settingsView.foreground
+              fontFamily: settingsView.fontFamily
+              radius: settingsView.radius
             }
           }
         }

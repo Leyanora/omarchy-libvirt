@@ -8,6 +8,10 @@ ListView {
   property var service: null
   property var config: null
 
+  // Already filtered by the root, which also owns the cursor index into it.
+  property var domains: []
+  property int cursorIndex: -1
+
   property color foreground: Color.foreground
   property string fontFamily: Style.font.family
   property color urgent: Color.urgent
@@ -17,14 +21,20 @@ ListView {
   signal consoleRequested(string name)
   signal snapshotsRequested(string name)
   signal expandToggled(string name)
+  signal cursorRequested(string name)
 
   height: Math.min(contentHeight, Style.space(300))
   clip: true
   interactive: contentHeight > height
   boundsBehavior: Flickable.StopAtBounds
-  model: domainList.service.domains
+  model: domainList.domains
+
+  // Follows the keyboard cursor out of view; a mouse-driven cursor is already visible.
+  onCursorIndexChanged: if (cursorIndex >= 0) positionViewAtIndex(cursorIndex, ListView.Contain)
 
   delegate: DomainRow {
+    required property int index
+
     service: domainList.service
     foreground: domainList.foreground
     fontFamily: domainList.fontFamily
@@ -36,8 +46,10 @@ ListView {
     showSnapshots: domainList.config.showSnapshots
     consoleEnabled: domainList.config.consoleCommand !== ""
     expanded: domainList.expandedDomain === domainName
+    hasCursor: domainList.cursorIndex === index
     onConsoleRequested: function (name) { domainList.consoleRequested(name) }
     onSnapshotsRequested: function (name) { domainList.snapshotsRequested(name) }
     onExpandToggled: function (name) { domainList.expandToggled(name) }
+    onCursorRequested: function (name) { domainList.cursorRequested(name) }
   }
 }
