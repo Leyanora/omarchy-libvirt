@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Interface.js" as Interface
 
@@ -54,8 +55,8 @@ KeyboardPanel {
   focusTarget: keyCatcher
 
   readonly property string fontFamily: popup.bar ? popup.bar.fontFamily : Style.font.family
-  readonly property color foreground: popup.bar ? popup.bar.foreground : Color.popups.text
-  readonly property color urgent: popup.bar ? popup.bar.urgent : Color.urgent
+  readonly property color foreground: popup.bar ? popup.bar.foreground : Commons.Color.popups.text
+  readonly property color urgent: popup.bar ? popup.bar.urgent : Commons.Color.urgent
 
   PanelKeyCatcher {
     id: keyCatcher
@@ -116,7 +117,7 @@ KeyboardPanel {
           text: popup.settingsOpen
             ? "Settings"
             : (popup.snapshotDomain !== "" ? popup.snapshotDomain : "Virtual machines")
-          color: Color.popups.text
+          color: Commons.Color.popups.text
           font.family: popup.fontFamily
           font.pixelSize: Style.font.subtitle
         }
@@ -160,7 +161,7 @@ KeyboardPanel {
         textFormat: Text.PlainText
         elide: Text.ElideRight
         text: Interface.connectionLabel(popup.service.connectionDown)
-        color: popup.service.connectionDown ? popup.urgent : Qt.darker(Color.popups.text, 1.4)
+        color: popup.service.connectionDown ? popup.urgent : Qt.darker(Commons.Color.popups.text, 1.4)
         font.family: popup.fontFamily
         font.pixelSize: Style.font.caption
 
@@ -183,7 +184,7 @@ KeyboardPanel {
         textFormat: Text.PlainText
         elide: Text.ElideRight
         text: "Snapshots"
-        color: Qt.darker(Color.popups.text, 1.4)
+        color: Qt.darker(Commons.Color.popups.text, 1.4)
         font.family: popup.fontFamily
         font.pixelSize: Style.font.caption
       }
@@ -235,7 +236,7 @@ KeyboardPanel {
           : (popup.filterText !== ""
             ? "No domains match that filter."
             : "No domains defined on this connection.")
-        color: Color.popups.text
+        color: Commons.Color.popups.text
         opacity: 0.7
         font.family: popup.fontFamily
         font.pixelSize: Style.font.bodySmall
@@ -295,7 +296,7 @@ KeyboardPanel {
           anchors.verticalCenter: parent.verticalCenter
           textFormat: Text.PlainText
           text: Interface.Glyph.manager + "  Open virt-manager"
-          color: Color.popups.text
+          color: Commons.Color.popups.text
           font.family: popup.fontFamily
           font.pixelSize: Style.font.bodySmall
         }

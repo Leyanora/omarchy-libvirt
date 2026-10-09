@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Interface.js" as Interface
 
@@ -9,7 +10,7 @@ Column {
 
   property var config: null
 
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
   property int radius: Style.cornerRadius
 
@@ -39,8 +40,8 @@ Column {
       label: "libvirt URI"
       value: settingsView.config.uri
       options: settingsView.config.connectionOptions
-      foreground: Color.popups.text
-      accent: Color.accent
+      foreground: Commons.Color.popups.text
+      accent: Commons.Color.accent
       fontFamily: settingsView.fontFamily
       onChanged: function (value) { settingsView.config.persistUri(value) }
     }
@@ -51,7 +52,7 @@ Column {
       from: 2
       to: 300
       foreground: settingsView.foreground
-      accent: Color.accent
+      accent: Commons.Color.accent
       fontFamily: settingsView.fontFamily
       onModified: function (value) { settingsView.config.persistInterval(value) }
     }
@@ -136,7 +137,7 @@ Column {
           radius: settingsView.radius
           // Filled like Toggle at rest, so the header and the picker read as one card.
           color: colorRow.expanded
-            ? Style.normalFillFor(settingsView.foreground, Color.accent)
+            ? Style.normalFillFor(settingsView.foreground, Commons.Color.accent)
             : "transparent"
           borderSpec: colorRow.expanded
             ? Border.flat(Qt.darker(settingsView.foreground, 1.8), Math.max(1, Style.space(1)))
@@ -178,7 +179,7 @@ Column {
               textFormat: Text.PlainText
               elide: Text.ElideRight
               text: colorRow.modelData.label
-              color: Color.popups.text
+              color: Commons.Color.popups.text
               font.family: settingsView.fontFamily
               font.pixelSize: Style.font.bodySmall
             }
@@ -194,7 +195,7 @@ Column {
               text: colorRow.expanded
                 ? picker.currentHex
                 : settingsView.config.colorHex(colorRow.colorName)
-              color: Qt.darker(Color.popups.text, 1.3)
+              color: Qt.darker(Commons.Color.popups.text, 1.3)
               font.family: settingsView.fontFamily
               font.pixelSize: Style.font.bodySmall
             }

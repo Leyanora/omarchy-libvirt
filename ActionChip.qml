@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // A raised icon pill: PanelActionButton is flat at rest, and Ui/ is read-only.
@@ -8,7 +9,7 @@ BorderSurface {
 
   property string iconText: ""
   property string tooltipText: ""
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property color hoverColor: foreground
   property string fontFamily: Style.font.family
   // Armed half of arm-then-confirm: the chip wears the urgent colour and a border.
@@ -27,8 +28,8 @@ BorderSurface {
   readonly property bool hot: chipMouse.containsMouse && chip.enabled
   readonly property color tint: accented ? hoverColor : foreground
 
-  color: hot ? Style.hoverFillFor(hoverColor, hoverColor) : Style.normalFillFor(foreground, Color.accent)
-  borderSpec: Border.controlSpec(hot || accented ? "hover-cursor" : "normal", tint, Color.accent)
+  color: hot ? Style.hoverFillFor(hoverColor, hoverColor) : Style.normalFillFor(foreground, Commons.Color.accent)
+  borderSpec: Border.controlSpec(hot || accented ? "hover-cursor" : "normal", tint, Commons.Color.accent)
 
   Behavior on color { ColorAnimation { duration: 60 } }
 

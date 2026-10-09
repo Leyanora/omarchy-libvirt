@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Interface.js" as Interface
 
@@ -11,13 +12,13 @@ Item {
 
   property var service: null
 
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
-  property color urgent: Color.urgent
+  property color urgent: Commons.Color.urgent
   property int radius: Style.cornerRadius
-  property color colorRunning: Color.foreground
-  property color colorPaused: Color.foreground
-  property color colorStopped: Color.foreground
+  property color colorRunning: Commons.Color.foreground
+  property color colorPaused: Commons.Color.foreground
+  property color colorStopped: Commons.Color.foreground
 
   property bool expanded: false
   property bool showSnapshots: true
@@ -61,7 +62,7 @@ Item {
       : 0)
     radius: row.radius
     // Filled like Toggle at rest, so the name row and the chips read as one card.
-    color: row.expanded ? Style.normalFillFor(row.foreground, Color.accent) : "transparent"
+    color: row.expanded ? Style.normalFillFor(row.foreground, Commons.Color.accent) : "transparent"
     borderSpec: row.expanded
       ? Border.flat(Qt.darker(row.foreground, 1.8), Math.max(1, Style.space(1)))
       : Border.none()
@@ -113,7 +114,7 @@ Item {
         visible: row.working
         textFormat: Text.PlainText
         text: Interface.Glyph.working
-        color: Color.accent
+        color: Commons.Color.accent
         font.family: row.fontFamily
         font.pixelSize: Style.font.caption
       }
@@ -128,7 +129,7 @@ Item {
         textFormat: Text.PlainText
         elide: Text.ElideRight
         text: row.domainName
-        color: nameMouse.containsMouse && row.canConsole ? Color.accent : Color.popups.text
+        color: nameMouse.containsMouse && row.canConsole ? Commons.Color.accent : Commons.Color.popups.text
         opacity: row.isOff ? 0.6 : 1.0
         font.family: row.fontFamily
         font.pixelSize: Style.font.body
@@ -244,7 +245,7 @@ Item {
         textFormat: Text.PlainText
         elide: Text.ElideRight
         text: row.expanded ? Interface.detailLine(row.service.detail, row.service.detailReason) : ""
-        color: Qt.darker(Color.popups.text, 1.4)
+        color: Qt.darker(Commons.Color.popups.text, 1.4)
         font.family: row.fontFamily
         font.pixelSize: Style.font.caption
       }

@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Interface.js" as Interface
 
@@ -10,9 +11,9 @@ Column {
   property var service: null
   property string domain: ""
 
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
-  property color urgent: Color.urgent
+  property color urgent: Commons.Color.urgent
   property int radius: Style.cornerRadius
 
   property int cursorIndex: -1
@@ -77,7 +78,7 @@ Column {
         visible: snapshotRow.isCurrent
         textFormat: Text.PlainText
         text: Interface.Glyph.current
-        color: Color.accent
+        color: Commons.Color.accent
         font.family: snapshotView.fontFamily
         font.pixelSize: Style.font.caption
 
@@ -105,7 +106,7 @@ Column {
         textFormat: Text.PlainText
         elide: Text.ElideRight
         text: snapshotRow.snapshotName
-        color: Color.popups.text
+        color: Commons.Color.popups.text
         font.family: snapshotView.fontFamily
         font.pixelSize: Style.font.body
       }
@@ -158,7 +159,7 @@ Column {
     textFormat: Text.PlainText
     wrapMode: Text.WordWrap
     text: "No snapshots for this domain."
-    color: Color.popups.text
+    color: Commons.Color.popups.text
     opacity: 0.7
     font.family: snapshotView.fontFamily
     font.pixelSize: Style.font.bodySmall

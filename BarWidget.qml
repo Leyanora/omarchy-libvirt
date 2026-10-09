@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Interface.js" as Interface
 import "Virsh.js" as Virsh
@@ -34,10 +35,10 @@ BarWidget {
   // Amber while something is suspended, urgent while the connection is down —
   // the glyph says which of the three it is before the popup is opened.
   readonly property color barTint: service.connectionDown
-    ? (root.bar ? root.bar.urgent : Color.urgent)
+    ? (root.bar ? root.bar.urgent : Commons.Color.urgent)
     : (service.pausedCount > 0
       ? config.colorPaused
-      : (root.bar ? root.bar.barForeground : Color.foreground))
+      : (root.bar ? root.bar.barForeground : Commons.Color.foreground))
 
   function open() {
     popupOpen = true

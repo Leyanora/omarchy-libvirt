@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Interface.js" as Interface
 import "Settings.js" as Config
@@ -11,7 +12,7 @@ Item {
   property var config: null
   property string colorName: ""
 
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
   property int radius: Style.cornerRadius
 
@@ -218,7 +219,7 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
           textFormat: Text.PlainText
           text: entry.label
-          color: Qt.darker(Color.popups.text, 1.3)
+          color: Qt.darker(Commons.Color.popups.text, 1.3)
           font.family: picker.fontFamily
           font.pixelSize: Style.font.bodySmall
         }
@@ -282,7 +283,7 @@ Item {
             radius: width / 2
             color: preset.modelData
             border.width: presetMouse.containsMouse ? Math.max(1, Style.space(2)) : 0
-            border.color: Color.popups.text
+            border.color: Commons.Color.popups.text
 
             MouseArea {
               id: presetMouse
