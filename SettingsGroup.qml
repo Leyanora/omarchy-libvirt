@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // A titled box of related settings — three bare rows in a column would not read
@@ -8,7 +9,7 @@ BorderSurface {
   id: group
 
   property string title: ""
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
 
   default property alias content: rows.children

@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 // The disarm window, drawn. Arm-then-confirm is otherwise invisible: nothing on
 // screen says how long the second click still has.
@@ -8,7 +9,7 @@ Rectangle {
 
   // 1 at the moment of arming, 0 when the window has run out.
   property real fraction: 0
-  property color tint: Color.urgent
+  property color tint: Commons.Color.urgent
 
   anchors.bottom: parent.bottom
   anchors.horizontalCenter: parent.horizontalCenter

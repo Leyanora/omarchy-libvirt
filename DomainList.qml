@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 
 // The domain rows, sized to their content up to a cap and scrolling past it.
 ListView {
@@ -12,9 +13,9 @@ ListView {
   property var domains: []
   property int cursorIndex: -1
 
-  property color foreground: Color.foreground
+  property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
-  property color urgent: Color.urgent
+  property color urgent: Commons.Color.urgent
 
   property string expandedDomain: ""
 
