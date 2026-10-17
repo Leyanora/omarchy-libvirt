@@ -211,13 +211,6 @@ BarWidget {
     }
   }
 
-  CrashWatch {
-    id: crashWatch
-    moduleName: root.moduleName
-    suppress: config.suppressCrashToasts
-    ignorePattern: config.crashIgnore
-  }
-
   // ---- Bar button ------------------------------------------------------
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -263,7 +256,6 @@ BarWidget {
 
     service: service
     config: config
-    crashWatch: crashWatch
 
     settingsOpen: root.settingsOpen
     snapshotDomain: root.snapshotDomain
