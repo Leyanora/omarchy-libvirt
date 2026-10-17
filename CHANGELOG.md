@@ -3,6 +3,21 @@
 Notable changes to Omarchy qemu widget. Versions are the `version` field in
 `manifest.json`, and follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.1] — 2026-10-17
+
+- **Removed crash-toast suppression.** The widget no longer writes a systemd
+  drop-in for `omarchy-crash-watch.service`, and the settings view lost its
+  "Suppress qemu crash notifications" switch. `suppressCrashToasts` and
+  `crashIgnore` in `shell.json` are now ignored. A drop-in an earlier version
+  wrote lives in `$XDG_RUNTIME_DIR` and is gone at the next login; to drop it
+  sooner:
+
+  ```bash
+  rm -f "$XDG_RUNTIME_DIR/systemd/user/omarchy-crash-watch.service.d/50-leyanora.libvirt.conf"
+  systemctl --user daemon-reload
+  systemctl --user restart omarchy-crash-watch.service
+  ```
+
 ## [1.7.0] — 2026-08-26
 
 - **Keyboard navigation.** The popup takes focus and carries a row cursor:

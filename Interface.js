@@ -93,8 +93,7 @@ function barText(icon, count, showLabel) {
 }
 
 // settingsError first: the user just caused it, by hand.
-function errorText(settingsError, lastError, actionError, crashError) {
+function errorText(settingsError, lastError, actionError) {
   if (settingsError !== "") return settingsError
-  if (lastError !== "") return lastError
-  return actionError !== "" ? actionError : crashError
+  return lastError !== "" ? lastError : actionError
 }

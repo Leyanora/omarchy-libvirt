@@ -12,7 +12,6 @@ KeyboardPanel {
 
   property var service: null
   property var config: null
-  property var crashWatch: null
 
   property bool settingsOpen: false
   property string snapshotDomain: ""
@@ -272,7 +271,7 @@ KeyboardPanel {
         textFormat: Text.PlainText
         wrapMode: Text.WordWrap
         text: Interface.errorText(popup.config.error, popup.service.lastError,
-          popup.service.actionError, popup.crashWatch.error)
+          popup.service.actionError)
         color: popup.urgent
         font.family: popup.fontFamily
         font.pixelSize: Style.font.bodySmall

@@ -118,8 +118,7 @@ re-polls; the widget still never *starts* libvirt, so a connection that is not
 running comes back Disconnected.
 
 **Behaviour** — the running count on the bar glyph, the snapshot button in the
-expanded row, the three confirm switches, and
-[suppressing QEMU crash toasts](#silencing-the-shutdown-crash-toast).
+expanded row, and the three confirm switches.
 
 **State light colours** — the three lights. Each colour row shows a
 swatch, the value in effect, and a palette button that expands the row into a
@@ -205,65 +204,6 @@ Nothing of yours is touched: the widget only ever shells out to `virsh`, so
 your domains, disks, networks and libvirt config are exactly as you left them.
 The packages above stay installed.
 
-The one thing that outlives the command is the crash-toast drop-in — and only if
-you turned it on, and only until you next log in, since it lives in
-`$XDG_RUNTIME_DIR`, which is wiped with the session. To be rid of it right now,
-either switch it off *before* removing the plugin, which deletes it on the spot,
-or clean up by hand afterwards:
-
-```bash
-rm -f "$XDG_RUNTIME_DIR/systemd/user/omarchy-crash-watch.service.d/50-leyanora.libvirt.conf"
-systemctl --user daemon-reload
-systemctl --user restart omarchy-crash-watch.service
-```
-
-## Silencing the shutdown crash toast
-
-Stopping a VM tends to raise an Omarchy "Process crashed: qemu-system-x86_64"
-notification. That is not this plugin, and not `virt-viewer` either: libvirt
-SIGTERMs QEMU, and QEMU segfaults inside its own SPICE teardown on the way out.
-The guest has already stopped by then, so nothing is lost — it is an upstream
-bug with no consequence beyond the toast. But you press the button that
-triggers it here, so this is where it gets handled.
-
-It is therefore offered as a setting, reachable from the cogwheel in the popup
-header — or as `suppressCrashToasts` in `shell.json`, which is the same key.
-Flipping the switch writes it back to `shell.json`, so it sticks.
-
-It is **off by default**. Turned on, the widget writes a drop-in at
-
-```
-$XDG_RUNTIME_DIR/systemd/user/omarchy-crash-watch.service.d/50-leyanora.libvirt.conf
-```
-
-that sets `OMARCHY_CRASH_IGNORE` for Omarchy's crash watcher — the supported
-filter, nothing patched — then reloads and restarts it. An unchanged file is
-left alone.
-
-That path is the runtime unit directory, not `~/.config`, deliberately: Omarchy
-has no uninstall hook for plugins, so a drop-in under `~/.config` would outlive
-the plugin and go on silencing QEMU crashes on a system that no longer has the
-widget. In the runtime directory it is rewritten on every start and gone at the
-next login. (Upgrading from an earlier version also sweeps the old `~/.config`
-drop-in away.)
-
-Turn it on from the cogwheel, or with:
-
-```json
-{ "id": "leyanora.libvirt", "suppressCrashToasts": true }
-```
-
-Two things worth knowing:
-
-- The watcher filters on the executable name only, so this also silences a QEMU
-  crash that happens *mid-run* — a VM dying under you goes unannounced. That is
-  the reason it is off by default.
-- The widget will only ever delete a drop-in carrying its own marker comment, so
-  a file you wrote by hand at either path is left alone.
-
-`omarchy-toggle-crash-capture` remains the way to turn crash announcements off
-wholesale, if you would rather not filter per-binary.
-
 ## Settings
 
 Every key goes in the widget's entry in `~/.config/omarchy/shell.json`, keyed
@@ -297,8 +237,6 @@ by the plugin id — not the display name:
 | `colorRunning` | `#3fb950` | State light, running. Also editable from the cogwheel |
 | `colorPaused` | `#d29922` | State light, paused. Also editable from the cogwheel |
 | `colorStopped` | `#f85149` | State light, shut off. Also editable from the cogwheel |
-| `suppressCrashToasts` | `false` | Filter QEMU crash toasts, see [above](#silencing-the-shutdown-crash-toast). The one key the popup can also write, from its cogwheel |
-| `crashIgnore` | `^qemu-system-` | Regex of executable names to filter when the above is on. A `%` is passed through literally; a value containing a quote or newline, or ending in a backslash, is refused with an error in the popup, because it cannot survive the systemd drop-in intact |
 
 ## IPC
 

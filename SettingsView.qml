@@ -83,18 +83,6 @@ Column {
           !settingsView.config.flag(modelData.name))
       }
     }
-
-    Toggle {
-      width: parent.width
-      radius: settingsView.radius
-      label: "Suppress qemu crash notifications"
-      description: "Also silences a QEMU crash that happens mid-run."
-      checked: settingsView.config.suppressCrashToasts
-      foreground: settingsView.foreground
-      fontFamily: settingsView.fontFamily
-      onClicked: settingsView.config.persist("suppressCrashToasts",
-        !settingsView.config.suppressCrashToasts)
-    }
   }
 
   SettingsGroup {

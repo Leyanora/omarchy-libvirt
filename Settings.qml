@@ -38,9 +38,6 @@ QtObject {
   // Named consoleCommand, not console: `console` is a JS global in every QML scope.
   readonly property string consoleCommand: read("console", "virt-viewer --connect {uri} {name}")
 
-  readonly property bool suppressCrashToasts: read("suppressCrashToasts", false)
-  readonly property string crashIgnore: read("crashIgnore", "^qemu-system-")
-
   // ---- State light colours ---------------------------------------------
   // The one sanctioned hardcode: a state light must read green/red.
   readonly property string defaultColorRunning: "#3fb950"
