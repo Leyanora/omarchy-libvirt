@@ -13,6 +13,10 @@ Item {
   property bool confirmDiscardSaved: true
   property bool confirmSnapshotRevert: true
 
+  // Off means no domstats at all: the root turns it on for the bar or an open popup.
+  property bool statsEnabled: false
+  property int statsInterval: 3
+
   // Bound from the view: the snapshot list follows whichever row is open.
   property string snapshotDomain: ""
 
@@ -119,6 +123,7 @@ Item {
       domains = []
       clearArm()
       shutdownAt = ({})
+      clearStats()
       service.domainsLost()
       return
     }
@@ -168,9 +173,73 @@ Item {
     snapshots = []
     shutdownAt = ({})
     clearArm()
+    clearStats()
     service.domainsLost()
     refresh()
   }
+
+  // ---- Usage -----------------------------------------------------------
+  // Its own map, never folded into `domains`: that would rebuild every row per sample.
+  property var stats: ({})
+  property var statsPrev: ({})
+
+  readonly property bool sampling: statsEnabled && runningCount > 0 && !connectionDown
+
+  function clearStats() {
+    stats = ({})
+    statsPrev = ({})
+  }
+
+  function sampleStats() {
+    statsProbe.running = false
+    statsProbe.running = true
+  }
+
+  function applyStats(text) {
+    var at = Date.now()
+    var samples = Virsh.parseDomStats(text)
+    var next = ({})
+    var prev = ({})
+    for (var name in samples) {
+      var sample = samples[name]
+      prev[name] = { cpuTime: sample.cpuTime, at: at }
+      next[name] = {
+        cpu: Virsh.cpuPercent(statsPrev[name], sample.cpuTime, sample.vcpus, at),
+        vcpus: sample.vcpus,
+        memUsed: Virsh.memoryUsed(sample),
+        memTotal: sample.current
+      }
+    }
+    statsPrev = prev
+    stats = next
+  }
+
+  Process {
+    id: statsProbe
+    command: Virsh.statsArgv(service.uri)
+    stdout: StdioCollector {
+      onStreamFinished: service.applyStats(text)
+    }
+    stderr: StdioCollector {}
+  }
+
+  Timer {
+    running: service.sampling
+    interval: service.statsInterval * 1000
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: service.sampleStats()
+  }
+
+  // A percentage needs two samples, so the second comes early rather than a full tick on.
+  Timer {
+    running: service.sampling
+    interval: 1000
+    onTriggered: service.sampleStats()
+  }
+
+  // A stale previous sample would average across the gap, so stopping forgets it.
+  onSamplingChanged: if (!sampling) clearStats()
 
   // ---- Stalled shutdowns -----------------------------------------------
   // virsh returns when the request is queued, so a guest that ignores ACPI leaves

@@ -59,6 +59,30 @@ The popup takes keyboard focus, so it can be driven without the mouse — bind
 The cursor is shared with the mouse: hovering a row moves it, so there is only
 ever one highlight on screen.
 
+### CPU and memory
+
+A running row shows two figures before its buttons, each with a hairline gauge
+under it: **CPU** (󰻠) and **memory in use** (󰍛). The CPU figure turns red at
+90%. Both come from one `virsh domstats` call that covers every running domain,
+every three seconds by default. It runs only while the popup is open or the bar
+readout is on, so a closed popup with the bar readout off collects nothing.
+
+- **CPU: 100% means every vCPU assigned to the domain is fully busy.** It is the
+  change in libvirt's cumulative `cpu.time` divided by elapsed time × vCPU count,
+  the same figure virt-manager shows. It reads `–` until a second sample exists,
+  which takes about a second.
+- **Memory** is what the guest itself reports as used when it runs a
+  memory-balloon driver with statistics enabled. Without one, it is the host-side
+  resident memory of the qemu process, which is a little higher. Either figure is
+  out of the domain's current allocation, which the expanded row spells out as
+  `2.6 / 4 GiB`.
+
+**In the bar**, turning on *CPU usage in the bar* adds `name 41%` per running
+domain next to the glyph. Long names are shortened, and at most three are shown
+before a `+N`. The settings view then offers *Domains in the bar* to narrow it
+down; choose none to show every running domain. The bar tooltip lists CPU and
+memory for each running domain while sampling is on.
+
 ### In the expanded row
 
 Expanding a row draws a border around it and fills it, so the name and its
@@ -118,7 +142,9 @@ re-polls; the widget still never *starts* libvirt, so a connection that is not
 running comes back Disconnected.
 
 **Behaviour** — the running count on the bar glyph, the snapshot button in the
-expanded row, and the three confirm switches.
+expanded row, CPU and memory in the popup, CPU usage in the bar (with the
+domains it covers), and the three confirm switches. The **Connection** box also
+holds the usage sampling interval.
 
 **State light colours** — the three lights. Each colour row shows a
 swatch, the value in effect, and a palette button that expands the row into a
@@ -146,9 +172,7 @@ guest acts on it, so expect a row to change state a beat after you click.
 
 ## Prerequisites
 
-```bash
-sudo pacman -S qemu-full libvirt virt-manager virt-viewer edk2-ovmf
-```
+Install these packages before enabling the widget:
 
 | Package | Why |
 |---|---|
@@ -157,6 +181,7 @@ sudo pacman -S qemu-full libvirt virt-manager virt-viewer edk2-ovmf
 | `virt-viewer` | **Required for consoles** — it is what clicking a domain name opens |
 | `virt-manager` | Only the popup's footer button. Set `"manager": ""` to hide that row |
 | `edk2-ovmf` | UEFI firmware for guests. Optional, but a modern guest usually wants it |
+| `dnsmasq` | Only for `qemu:///system`: the `default` NAT network needs it for DHCP |
 
 KVM needs no group membership on Arch — `/dev/kvm` is world-writable by udev
 rule. Check with `test -w /dev/kvm && echo ok`.
@@ -166,18 +191,11 @@ spawns `virtqemud` under your own user on first contact, guests get QEMU
 user-mode networking, and definitions live in `~/.config/libvirt/`. The
 trade-off is no inbound connections to guests and no networking between them.
 
-For host-wide `qemu:///system` instead:
-
-```bash
-sudo usermod -aG libvirt $USER           # then log out and back in
-sudo pacman -S dnsmasq                   # the default NAT network needs it
-sudo systemctl enable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket
-sudo virsh net-autostart default && sudo virsh net-start default
-```
-
-`dnsmasq` is only an optional dependency of `libvirt`, but without it the
-`default` NAT network cannot hand out DHCP and refuses to start. Hosts on the
-monolithic daemon use `libvirtd.socket` in place of the three units above.
+Host-wide `qemu:///system` needs more than the packages. Your user has to be
+in the `libvirt` group, the libvirt daemon sockets have to be running, and the
+`default` network has to be started. `dnsmasq` is only an optional dependency of
+`libvirt`, but without it the `default` NAT network cannot hand out DHCP and
+refuses to start.
 
 ## Install
 
@@ -231,6 +249,10 @@ by the plugin id — not the display name:
 | `confirmDiscardSaved` | `true` | Require the second click on discard saved state. Also editable from the cogwheel |
 | `confirmSnapshotRevert` | `true` | Require the second click on snapshot revert and delete. Also editable from the cogwheel |
 | `showSnapshots` | `true` | Show the snapshots button in the expanded row. Also editable from the cogwheel |
+| `showStats` | `true` | CPU and memory on running rows while the popup is open. Also editable from the cogwheel |
+| `barStats` | `false` | CPU usage per running domain in the bar, sampled even while the popup is closed. Also editable from the cogwheel |
+| `barDomains` | `[]` | Names of the domains the bar readout covers; empty means every running one. Also editable from the cogwheel |
+| `statsInterval` | `3` | Usage sampling seconds, 1–60. Also editable from the cogwheel |
 | `console` | `virt-viewer --connect {uri} {name}` | Console command; `{uri}` and `{name}` are substituted shell-quoted |
 | `manager` | `virt-manager -c <uri>` | The popup's footer action; `""` hides the row |
 | `onRightClick` | same as `manager` | Right click on the bar item |

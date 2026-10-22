@@ -16,6 +16,9 @@ Column {
 
   property string expandedColor: ""
 
+  // The polled names, for the bar picker; handed in so the view never reads the service.
+  property var domainNames: []
+
   signal colorExpandToggled(string name)
   // Focus is handed back explicitly: dropping it would leave no item holding keys.
   signal keysReleased()
@@ -56,6 +59,17 @@ Column {
       fontFamily: settingsView.fontFamily
       onModified: function (value) { settingsView.config.persistInterval(value) }
     }
+
+    NumberField {
+      label: "Usage seconds"
+      value: settingsView.config.statsInterval
+      from: 1
+      to: 60
+      foreground: settingsView.foreground
+      accent: Commons.Color.accent
+      fontFamily: settingsView.fontFamily
+      onModified: function (value) { settingsView.config.persistStatsInterval(value) }
+    }
   }
 
   SettingsGroup {
@@ -82,6 +96,21 @@ Column {
         onClicked: settingsView.config.persist(modelData.name,
           !settingsView.config.flag(modelData.name))
       }
+    }
+
+    // Names are matched against parsed stats only, so no allowlist: none reaches argv.
+    MultiSelect {
+      width: parent.width
+      visible: settingsView.config.barStats
+      label: "Domains in the bar"
+      noSelectionText: "All running"
+      emptyText: "No domains defined"
+      values: settingsView.config.barDomains
+      options: settingsView.domainNames
+      foreground: Commons.Color.popups.text
+      accent: Commons.Color.accent
+      fontFamily: settingsView.fontFamily
+      onChanged: function (values) { settingsView.config.persist("barDomains", values) }
     }
   }
 

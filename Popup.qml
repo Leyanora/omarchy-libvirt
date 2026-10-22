@@ -248,6 +248,7 @@ KeyboardPanel {
         fontFamily: popup.fontFamily
         radius: popup.config.radius
         expandedColor: popup.expandedColor
+        domainNames: popup.service.domains.map(function (domain) { return domain.name })
         onColorExpandToggled: function (name) { popup.colorExpandToggled(name) }
         onKeysReleased: keyCatcher.forceActiveFocus()
       }

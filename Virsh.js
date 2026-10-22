@@ -199,6 +199,66 @@ function formatKiB(kib) {
   return Math.round(mib) + " MiB"
 }
 
+// The row's short form: four characters of room, so no unit name and one decimal.
+function formatKiBShort(kib) {
+  var mib = Number(kib) / 1024
+  if (!(mib > 0)) return ""
+  if (mib >= 1024) return (Math.round(mib / 102.4) / 10) + "G"
+  return Math.round(mib) + "M"
+}
+
+// No names in argv: one call samples every running domain, whatever the count.
+function statsArgv(uri) {
+  return ["virsh", "-c", uri, "domstats", "--list-running",
+    "--cpu-total", "--vcpu", "--balloon"]
+}
+
+// `Domain: 'name'` then indented `key=value`. libvirt rejects `\n` in a name, so a
+// header cannot be forged, and the quotes are cut first and last so `'` survives.
+function parseDomStats(text) {
+  var found = ({})
+  var current = null
+  var lines = String(text || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i]
+    if (line.indexOf("Domain: '") === 0 && line.charAt(line.length - 1) === "'") {
+      current = { cpuTime: 0, vcpus: 0, current: 0, rss: 0, available: 0, unused: -1 }
+      found[key(line.substring(9, line.length - 1))] = current
+      continue
+    }
+    var at = line.indexOf("=")
+    if (current === null || at < 0) continue
+    var field = line.substring(0, at).trim()
+    // Per-vCPU counters are most of the output and none of what is shown.
+    if (field.indexOf("vcpu.") === 0 && field !== "vcpu.current") continue
+    var value = Number(line.substring(at + 1))
+    switch (field) {
+      case "cpu.time": current.cpuTime = value; break
+      case "vcpu.current": current.vcpus = value; break
+      case "balloon.current": current.current = value; break
+      case "balloon.rss": current.rss = value; break
+      case "balloon.available": current.available = value; break
+      case "balloon.unused": current.unused = value; break
+    }
+  }
+  return found
+}
+
+// The guest's own figure when its balloon driver reports one, else the host's RSS.
+function memoryUsed(sample) {
+  var used = sample.available > 0 && sample.unused >= 0
+    ? sample.available - sample.unused
+    : sample.rss
+  return Math.max(0, Math.min(used, sample.current > 0 ? sample.current : used))
+}
+
+// 100 is every assigned vCPU busy the whole window; -1 until two samples exist.
+function cpuPercent(prev, cpuTime, vcpus, at) {
+  if (!prev || !(vcpus > 0) || !(at > prev.at) || cpuTime < prev.cpuTime) return -1
+  var busy = (cpuTime - prev.cpuTime) / ((at - prev.at) * 1e6 * vcpus)
+  return Math.round(Math.max(0, Math.min(1, busy)) * 100)
+}
+
 function snapshotRevertArgv(uri, domain, name) {
   return ["virsh", "-c", uri, "snapshot-revert", domain, name]
 }

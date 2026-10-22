@@ -31,6 +31,9 @@ BarWidget {
 
   readonly property string displayText: service.runningCount > 0 ? String(service.runningCount) : ""
   readonly property bool showLabel: !vertical && config.showCount && displayText !== ""
+  readonly property string statsText: !vertical && config.barStats
+    ? Interface.barStatsText(service.domains, service.stats, config.barDomains)
+    : ""
 
   // Amber while something is suspended, urgent while the connection is down —
   // the glyph says which of the three it is before the popup is opened.
@@ -201,6 +204,8 @@ BarWidget {
     confirmForceOff: config.confirmForceOff
     confirmDiscardSaved: config.confirmDiscardSaved
     confirmSnapshotRevert: config.confirmSnapshotRevert
+    statsEnabled: config.barStats || (root.popupOpen && config.showStats)
+    statsInterval: config.statsInterval
     snapshotDomain: root.snapshotDomain
     detailDomain: root.expandedDomain
     // The settings view survives a failed poll on purpose; the row views cannot.
@@ -219,13 +224,13 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: Interface.barText(config.icon, root.displayText, root.showLabel)
+    text: Interface.barText(config.icon, root.displayText, root.showLabel, root.statsText)
     active: root.popupOpen
     useActiveColor: false
     foreground: root.barTint
     dimmed: service.runningCount === 0
     tooltipText: Interface.plain(Interface.barTooltip(service.lastError, service.domains,
-      service.runningCount, config.uri))
+      service.runningCount, config.uri, service.stats))
     fixedWidth: root.vertical ? root.barSize : -1
     fixedHeight: root.vertical ? root.barSize : -1
 

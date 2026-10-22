@@ -3,6 +3,18 @@
 Notable changes to Omarchy qemu widget. Versions are the `version` field in
 `manifest.json`, and follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] — 2026-10-22
+
+- **CPU and memory per domain** (#4). Running rows show CPU and memory in use,
+  each with a hairline gauge. The expanded row spells them out as
+  `41% of 2 vCPU · 2.6 / 4 GiB`. 100% CPU means every assigned vCPU is busy.
+- **Optional CPU readout in the bar**, `name 41%` per running domain, off by
+  default and narrowed to chosen domains from the settings view.
+- One `virsh domstats` call samples every running domain. It runs only while
+  the popup is open or the bar readout is on, every `statsInterval` seconds
+  (default 3).
+- New settings: `showStats`, `barStats`, `barDomains` and `statsInterval`.
+
 ## [1.8.1] — 2026-10-17
 
 - **Removed crash-toast suppression.** The widget no longer writes a systemd

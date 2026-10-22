@@ -1,6 +1,7 @@
 import QtQuick
 import qs.Commons
 import qs.Commons as Commons
+import "Virsh.js" as Virsh
 
 // The domain rows, sized to their content up to a cap and scrolling past it.
 ListView {
@@ -46,6 +47,8 @@ ListView {
     colorStopped: domainList.config.colorStopped
     showSnapshots: domainList.config.showSnapshots
     consoleEnabled: domainList.config.consoleCommand !== ""
+    showStats: domainList.config.showStats
+    usage: domainList.service.stats[Virsh.key(domainName)]
     expanded: domainList.expandedDomain === domainName
     hasCursor: domainList.cursorIndex === index
     onConsoleRequested: function (name) { domainList.consoleRequested(name) }

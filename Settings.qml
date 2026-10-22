@@ -30,6 +30,11 @@ QtObject {
   readonly property bool confirmDiscardSaved: read("confirmDiscardSaved", true)
   readonly property bool confirmSnapshotRevert: read("confirmSnapshotRevert", true)
   readonly property bool showSnapshots: read("showSnapshots", true)
+  readonly property bool showStats: read("showStats", true)
+  readonly property bool barStats: read("barStats", false)
+  readonly property int statsInterval: Math.max(1, Math.min(60, read("statsInterval", 3)))
+  // Only ever compared against parsed stats, never handed to a command.
+  readonly property var barDomains: Config.nameList(read("barDomains", []))
   // Floored, not theme-pure: a sharp theme would otherwise render every corner square.
   readonly property int radius: read("cornerRadius", Math.max(Style.cornerRadius, Style.space(6)))
   readonly property string manager: read("manager", "virt-manager -c " + Virsh.shq(uri))
@@ -61,6 +66,8 @@ QtObject {
     switch (name) {
       case "showCount": return showCount
       case "showSnapshots": return showSnapshots
+      case "showStats": return showStats
+      case "barStats": return barStats
       case "confirmForceOff": return confirmForceOff
       case "confirmDiscardSaved": return confirmDiscardSaved
       case "confirmSnapshotRevert": return confirmSnapshotRevert
@@ -110,6 +117,11 @@ QtObject {
   function persistInterval(value) {
     config.error = ""
     persist("interval", Math.max(2, Math.min(300, Math.round(Number(value) || 10))))
+  }
+
+  function persistStatsInterval(value) {
+    config.error = ""
+    persist("statsInterval", Math.max(1, Math.min(60, Math.round(Number(value) || 3))))
   }
 
   function persistColor(name, text) {

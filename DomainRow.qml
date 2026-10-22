@@ -3,6 +3,7 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 import "Interface.js" as Interface
+import "Virsh.js" as Virsh
 
 // One domain: state light, name, power buttons, and the chip grid it expands into.
 Item {
@@ -23,6 +24,10 @@ Item {
   property bool expanded: false
   property bool showSnapshots: true
   property bool consoleEnabled: true
+  property bool showStats: true
+
+  // This domain's latest sample, or undefined while nothing is sampling it.
+  property var usage: undefined
 
   // Keyboard and mouse share one highlight, so the row never paints from hover.
   property bool hasCursor: false
@@ -48,6 +53,7 @@ Item {
     ? row.service.waitedFor(row.domainName, row.service.clock)
     : 0
   readonly property bool stalled: row.shutdownWaited >= Interface.STALL_AFTER
+  readonly property bool showUsage: row.isRunning && row.showStats && row.usage !== undefined
 
   width: ListView.view.width
   height: frame.height
@@ -123,7 +129,7 @@ Item {
         id: nameText
         anchors.left: dot.right
         anchors.leftMargin: Style.spacing.md
-        anchors.right: actions.left
+        anchors.right: usage.visible ? usage.left : actions.left
         anchors.rightMargin: Style.spacing.sm
         anchors.verticalCenter: parent.verticalCenter
         textFormat: Text.PlainText
@@ -149,6 +155,38 @@ Item {
             text: Interface.nameTooltip(row.domainName, nameText.truncated, row.canConsole)
             fontFamily: row.fontFamily
           }
+        }
+      }
+
+      Row {
+        id: usage
+        anchors.right: actions.left
+        anchors.rightMargin: Style.spacing.sm
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: Style.spacing.md
+        visible: row.showUsage
+        opacity: row.showUsage ? 1 : 0
+
+        Behavior on opacity { NumberAnimation { duration: 160 } }
+
+        // Hot in the theme's urgent, not a fourth hardcoded colour.
+        UsageFigure {
+          glyph: Interface.Glyph.cpu
+          value: Interface.cpuText(row.usage)
+          widest: "100%"
+          fraction: row.usage ? row.usage.cpu / 100 : -1
+          tint: row.usage && row.usage.cpu >= Interface.CPU_HOT ? row.urgent : Commons.Color.accent
+          foreground: row.foreground
+          fontFamily: row.fontFamily
+        }
+
+        UsageFigure {
+          glyph: Interface.Glyph.memory
+          value: row.usage ? Virsh.formatKiBShort(row.usage.memUsed) : ""
+          widest: "99.9G"
+          fraction: row.usage && row.usage.memTotal > 0 ? row.usage.memUsed / row.usage.memTotal : -1
+          foreground: row.foreground
+          fontFamily: row.fontFamily
         }
       }
 
@@ -244,7 +282,8 @@ Item {
         horizontalAlignment: Text.AlignHCenter
         textFormat: Text.PlainText
         elide: Text.ElideRight
-        text: row.expanded ? Interface.detailLine(row.service.detail, row.service.detailReason) : ""
+        text: row.expanded ? Interface.detailLine(row.service.detail, row.service.detailReason,
+          row.showUsage ? row.usage : undefined) : ""
         color: Qt.darker(Commons.Color.popups.text, 1.4)
         font.family: row.fontFamily
         font.pixelSize: Style.font.caption

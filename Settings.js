@@ -20,6 +20,10 @@ var BEHAVIOUR_SETTINGS = [
     description: "Puts the number of running domains next to the bar glyph." },
   { name: "showSnapshots", label: "Snapshot button in the expanded row",
     description: "" },
+  { name: "showStats", label: "CPU and memory in the popup",
+    description: "On running rows; 100% CPU is every assigned vCPU busy." },
+  { name: "barStats", label: "CPU usage in the bar",
+    description: "Samples while on, even with the popup closed." },
   { name: "confirmForceOff", label: "Confirm force off",
     description: "Force off discards unwritten guest state." },
   { name: "confirmDiscardSaved", label: "Confirm discarding saved state",
@@ -47,6 +51,14 @@ function isKnownUri(options, value) {
 function read(entry, name, fallback) {
   var value = entry ? entry[name] : undefined
   return value === undefined || value === null ? fallback : value
+}
+
+// shell.json arrays can arrive as list-likes that fail Array.isArray; strings only out.
+function nameList(value) {
+  if (!value || typeof value === "string" || typeof value.length !== "number") return []
+  var out = []
+  for (var i = 0; i < value.length; i++) out.push(String(value[i]))
+  return out
 }
 
 // updateEntryInline replaces the entry wholesale, so every other key is copied over.
