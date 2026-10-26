@@ -1,7 +1,8 @@
 // virsh argv, the poll script, and the parsers for what comes back.
 // Pure: nothing here touches QML, and nothing here holds state.
 
-// Names reach virsh as argv; shq() covers the two scripts and the host-run templates.
+// Names reach virsh as explicit option values, so leading dashes stay literal.
+// shq() covers the two scripts and the host-run templates.
 function shq(value) {
   return "'" + String(value).replace(/'/g, "'\\''") + "'"
 }
@@ -131,11 +132,11 @@ function cleanSnapshotName(value) {
 // null for anything off the allowlist, so a bad verb cannot reach a Process.
 function actionArgv(uri, verb, domain) {
   if (domain === "" || ACTION_VERBS.indexOf(verb) < 0) return null
-  return ["virsh", "-c", uri, verb, domain]
+  return ["virsh", "-c", uri, verb, "--domain", domain]
 }
 
 function snapshotListArgv(uri, domain) {
-  return ["virsh", "-c", uri, "-q", "snapshot-list", domain, "--name"]
+  return ["virsh", "-c", uri, "-q", "snapshot-list", "--domain", domain, "--name"]
 }
 
 function snapshotCreateArgv(uri, domain, name, description) {
@@ -149,7 +150,7 @@ function snapshotCreateArgv(uri, domain, name, description) {
 }
 
 function snapshotCurrentArgv(uri, domain) {
-  return ["virsh", "-c", uri, "-q", "snapshot-current", domain, "--name"]
+  return ["virsh", "-c", uri, "-q", "snapshot-current", "--domain", domain, "--name"]
 }
 
 // One line, or virsh's error on stderr — which never reaches this parser.
@@ -161,11 +162,11 @@ function parseSnapshotCurrent(text) {
 }
 
 function domInfoArgv(uri, domain) {
-  return ["virsh", "-c", uri, "dominfo", domain]
+  return ["virsh", "-c", uri, "dominfo", "--domain", domain]
 }
 
 function domStateArgv(uri, domain) {
-  return ["virsh", "-c", uri, "domstate", domain, "--reason"]
+  return ["virsh", "-c", uri, "domstate", "--domain", domain, "--reason"]
 }
 
 // dominfo is a `Field: value` table; only the two fields the row renders are kept.
@@ -260,11 +261,11 @@ function cpuPercent(prev, cpuTime, vcpus, at) {
 }
 
 function snapshotRevertArgv(uri, domain, name) {
-  return ["virsh", "-c", uri, "snapshot-revert", domain, name]
+  return ["virsh", "-c", uri, "snapshot-revert", "--domain", domain, "--snapshotname", name]
 }
 
 function snapshotDeleteArgv(uri, domain, name) {
-  return ["virsh", "-c", uri, "snapshot-delete", domain, name]
+  return ["virsh", "-c", uri, "snapshot-delete", "--domain", domain, "--snapshotname", name]
 }
 
 // The host runs these through its own `bash -lc`, so both halves need shq().
