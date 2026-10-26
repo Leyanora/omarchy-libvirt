@@ -207,7 +207,7 @@ Item {
         cpu: Virsh.cpuPercent(statsPrev[name], sample.cpuTime, sample.vcpus, at),
         vcpus: sample.vcpus,
         memUsed: Virsh.memoryUsed(sample),
-        memTotal: sample.current
+        memTotal: Virsh.memoryTotal(sample)
       }
     }
     statsPrev = prev
