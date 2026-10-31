@@ -122,7 +122,8 @@ function usageLine(usage) {
 }
 
 // Running domains only, narrowed to `selected` unless it is empty.
-function barStatsText(domains, stats, selected) {
+function barStatsText(domains, stats, selected, showNames, nameLength, aliases, showMemory) {
+  var limit = Math.max(1, Math.min(40, Math.round(Number(nameLength) || BAR_NAME_MAX)))
   var parts = []
   var more = 0
   for (var i = 0; i < domains.length; i++) {
@@ -135,8 +136,19 @@ function barStatsText(domains, stats, selected) {
       more++
       continue
     }
-    var short = name.length > BAR_NAME_MAX ? name.substring(0, BAR_NAME_MAX - 1) + "…" : name
-    parts.push(short + " " + cpuText(usage))
+    var alias = aliases && aliases[Virsh.key(name)]
+    var label = typeof alias === "string" && alias.trim() !== "" ? alias.trim() : name
+    // Count Unicode code points, so truncation never splits a surrogate pair.
+    var chars = Array.from(label)
+    var short = chars.length > limit ? chars.slice(0, limit - 1).join("") + "…" : label
+    var figures = cpuText(usage)
+    if (showMemory) {
+      var memory = typeof usage.memUsed === "number" && isFinite(usage.memUsed) && usage.memUsed >= 0
+        && typeof usage.memTotal === "number" && isFinite(usage.memTotal) && usage.memTotal > 0
+        ? Math.round(Math.min(1, usage.memUsed / usage.memTotal) * 100) + "%" : "–"
+      figures = "c:" + figures + " r:" + memory
+    }
+    parts.push((showNames === false ? "" : short + " ") + figures)
   }
   if (more > 0) parts.push("+" + more)
   return parts.join(" · ")

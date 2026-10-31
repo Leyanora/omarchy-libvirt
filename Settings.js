@@ -22,7 +22,7 @@ var BEHAVIOUR_SETTINGS = [
     description: "" },
   { name: "showStats", label: "CPU and memory in the popup",
     description: "On running rows; 100% CPU is every assigned vCPU busy." },
-  { name: "barStats", label: "CPU usage in the bar",
+  { name: "barStats", label: "Usage in the bar",
     description: "Samples while on, even with the popup closed." },
   { name: "confirmForceOff", label: "Confirm force off",
     description: "Force off discards unwritten guest state." },
@@ -98,4 +98,23 @@ function hexOf(r, g, b) {
   for (var i = 0; i < parts.length; i++)
     out += (parts[i] < 16 ? "0" : "") + parts[i].toString(16)
   return out
+}
+
+// Labels only: aliases never replace the real name in libvirt commands or pickers.
+function barNameLength(value) {
+  var number = Number(value)
+  return isFinite(number) ? Math.max(1, Math.min(40, Math.round(number))) : 12
+}
+
+function withBarAlias(aliases, domain, value) {
+  var next = ({})
+  if (aliases && typeof aliases === "object") {
+    for (var key in aliases)
+      if (key.indexOf("d:") === 0 && typeof aliases[key] === "string") next[key] = aliases[key]
+  }
+  var name = "d:" + domain
+  var label = String(value).trim()
+  if (label === "") delete next[name]
+  else next[name] = label
+  return next
 }

@@ -82,7 +82,7 @@ KeyboardPanel {
       else popup.keyText(text)
     }
 
-    Column {
+    ScrollableColumn {
       id: column
       anchors.fill: parent
       spacing: Style.spacing.sm

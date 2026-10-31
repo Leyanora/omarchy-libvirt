@@ -32,7 +32,8 @@ BarWidget {
   readonly property string displayText: service.runningCount > 0 ? String(service.runningCount) : ""
   readonly property bool showLabel: !vertical && config.showCount && displayText !== ""
   readonly property string statsText: !vertical && config.barStats
-    ? Interface.barStatsText(service.domains, service.stats, config.barDomains)
+    ? Interface.barStatsText(service.domains, service.stats, config.barDomains,
+      config.barShowNames, config.barNameLength, config.barAliases, config.barMemory)
     : ""
 
   // Amber while something is suspended, urgent while the connection is down —

@@ -223,7 +223,7 @@ function parseDomStats(text) {
   for (var i = 0; i < lines.length; i++) {
     var line = lines[i]
     if (line.indexOf("Domain: '") === 0 && line.charAt(line.length - 1) === "'") {
-      current = { cpuTime: 0, vcpus: 0, current: 0, rss: 0, available: 0, unused: -1 }
+      current = { cpuTime: 0, vcpus: 0, current: 0, rss: 0, available: 0, unused: -1, usable: -1 }
       found[key(line.substring(9, line.length - 1))] = current
       continue
     }
@@ -240,17 +240,28 @@ function parseDomStats(text) {
       case "balloon.rss": current.rss = value; break
       case "balloon.available": current.available = value; break
       case "balloon.unused": current.unused = value; break
+      case "balloon.usable": current.usable = value; break
     }
   }
   return found
 }
 
-// The guest's own figure when its balloon driver reports one, else the host's RSS.
+// Guest total pairs with guest memory stats; host RSS pairs with the allocation.
+function memoryTotal(sample) {
+  return sample.available > 0 && (sample.usable >= 0 || sample.unused >= 0)
+    ? sample.available : sample.current
+}
+
+// balloon.usable corresponds to guest MemAvailable, including reclaimable cache.
+// Prefer it to unused (MemFree), which counts cache as busy. Older guests fall
+// back to MemFree, and guests without balloon stats fall back to host QEMU RSS.
 function memoryUsed(sample) {
-  var used = sample.available > 0 && sample.unused >= 0
-    ? sample.available - sample.unused
-    : sample.rss
-  return Math.max(0, Math.min(used, sample.current > 0 ? sample.current : used))
+  var used = sample.available > 0 && sample.usable >= 0
+    ? sample.available - sample.usable
+    : (sample.available > 0 && sample.unused >= 0
+      ? sample.available - sample.unused : sample.rss)
+  var total = memoryTotal(sample)
+  return Math.max(0, Math.min(used, total > 0 ? total : used))
 }
 
 // 100 is every assigned vCPU busy the whole window; -1 until two samples exist.
