@@ -71,17 +71,23 @@ readout is on, so a closed popup with the bar readout off collects nothing.
   change in libvirt's cumulative `cpu.time` divided by elapsed time × vCPU count,
   the same figure virt-manager shows. It reads `–` until a second sample exists,
   which takes about a second.
-- **Memory** is what the guest itself reports as used when it runs a
-  memory-balloon driver with statistics enabled. Without one, it is the host-side
-  resident memory of the qemu process, which is a little higher. Either figure is
-  out of the domain's current allocation, which the expanded row spells out as
-  `2.6 / 4 GiB`.
+- **Memory** prefers guest total minus available memory (`MemTotal - MemAvailable`),
+  excluding reclaimable cache. Older guests that only report free memory fall
+  back to total minus free, which includes cache. These guest statistics require a
+  memory-balloon driver with statistics enabled. Without guest statistics, the
+  fallback is host-side QEMU resident memory. Guest figures use the guest total
+  as their denominator; host RSS uses the current allocation. The expanded row
+  spells out the corresponding used / total values, such as `2.6 / 4 GiB`.
 
-**In the bar**, turning on *CPU usage in the bar* adds `name 41%` per running
+**In the bar**, turning on *Usage in the bar* adds `name 41%` per running
 domain next to the glyph. Long names are shortened, and at most three are shown
 before a `+N`. The settings view then offers *Domains in the bar* to narrow it
-down; choose none to show every running domain. The bar tooltip lists CPU and
-memory for each running domain while sampling is on.
+down; choose none to show every running domain. Under **Bar labels**, turn off
+*Show domain names* for just the icon and CPU percentages. You can also
+turn on *Show memory usage* for `c:2% r:35%`, limit
+labels to 1–40 characters or choose a domain and enter a bar alias (Enter or
+leaving the field saves it; empty restores the real name). Aliases only change
+the bar label, never the tooltip, popup names or libvirt commands. The bar tooltip lists CPU and memory for each running domain while sampling is on.
 
 ### In the expanded row
 
@@ -251,6 +257,10 @@ by the plugin id — not the display name:
 | `showSnapshots` | `true` | Show the snapshots button in the expanded row. Also editable from the cogwheel |
 | `showStats` | `true` | CPU and memory on running rows while the popup is open. Also editable from the cogwheel |
 | `barStats` | `false` | CPU usage per running domain in the bar, sampled even while the popup is closed. Also editable from the cogwheel |
+| `barMemory` | `false` | Include RAM as a percentage of guest total (allocation when using the host RSS fallback) alongside CPU, e.g. `c:2% r:35%`; reuses the existing samples |
+| `barShowNames` | `true` | Show names next to bar CPU percentages. Turn off for a compact readout |
+| `barNameLength` | `12` | Maximum bar label length (1–40 Unicode code points, including the ellipsis) |
+| `barAliases` | `{}` | Optional labels keyed by `d:` plus the real domain name, e.g. `{"d:example-domain":"vm-a"}` |
 | `barDomains` | `[]` | Names of the domains the bar readout covers; empty means every running one. Also editable from the cogwheel |
 | `statsInterval` | `3` | Usage sampling seconds, 1–60. Also editable from the cogwheel |
 | `console` | `virt-viewer --connect {uri} {name}` | Console command; `{uri}` and `{name}` are substituted shell-quoted |

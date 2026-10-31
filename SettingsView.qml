@@ -116,6 +116,75 @@ Column {
 
   SettingsGroup {
     width: parent.width
+    visible: settingsView.config.barStats
+    radius: settingsView.radius
+    title: "Bar labels"
+    foreground: settingsView.foreground
+    fontFamily: settingsView.fontFamily
+
+    Toggle {
+      width: parent.width
+      label: "Show domain names"
+      description: "Turn off for just the icon and usage figures."
+      checked: settingsView.config.barShowNames
+      foreground: settingsView.foreground
+      fontFamily: settingsView.fontFamily
+      onClicked: settingsView.config.persist("barShowNames", !settingsView.config.barShowNames)
+    }
+
+    Toggle {
+      width: parent.width
+      label: "Show memory usage"
+      description: "RAM in use / guest total, excluding reclaimable cache when reported."
+      checked: settingsView.config.barMemory
+      foreground: settingsView.foreground
+      fontFamily: settingsView.fontFamily
+      onClicked: settingsView.config.persist("barMemory", !settingsView.config.barMemory)
+    }
+
+    NumberField {
+      visible: settingsView.config.barShowNames
+      label: "Maximum name characters"
+      value: settingsView.config.barNameLength
+      from: 1
+      to: 40
+      foreground: settingsView.foreground
+      accent: Commons.Color.accent
+      fontFamily: settingsView.fontFamily
+      onModified: function (value) { settingsView.config.persistBarNameLength(value) }
+    }
+
+    Dropdown {
+      id: aliasDomain
+      property string selectedDomain: ""
+      width: parent.width
+      visible: settingsView.config.barShowNames && settingsView.domainNames.length > 0
+      label: "Domain to label"
+      options: settingsView.domainNames.map(function (name) { return { value: name, label: name } })
+      value: settingsView.domainNames.indexOf(selectedDomain) >= 0
+        ? selectedDomain : (settingsView.domainNames[0] || "")
+      foreground: Commons.Color.popups.text
+      accent: Commons.Color.accent
+      fontFamily: settingsView.fontFamily
+      onChanged: function (value) { selectedDomain = value }
+    }
+
+    TextField {
+      width: parent.width
+      visible: aliasDomain.visible
+      placeholderText: "Bar alias (empty uses the domain name)"
+      text: settingsView.config.barAliases["d:" + aliasDomain.value] || ""
+      foreground: settingsView.foreground
+      font.family: settingsView.fontFamily
+      onEditingFinished: {
+        if (aliasDomain.value !== "") settingsView.config.persistBarAlias(aliasDomain.value, text)
+      }
+      onAccepted: settingsView.keysReleased()
+    }
+  }
+
+  SettingsGroup {
+    width: parent.width
     radius: settingsView.radius
     title: "State light colours"
     foreground: settingsView.foreground

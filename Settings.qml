@@ -33,6 +33,10 @@ QtObject {
   readonly property bool showStats: read("showStats", true)
   readonly property bool barStats: read("barStats", false)
   readonly property int statsInterval: Math.max(1, Math.min(60, read("statsInterval", 3)))
+  readonly property bool barMemory: read("barMemory", false)
+  readonly property bool barShowNames: read("barShowNames", true)
+  readonly property int barNameLength: Config.barNameLength(read("barNameLength", 12))
+  readonly property var barAliases: read("barAliases", ({}))
   // Only ever compared against parsed stats, never handed to a command.
   readonly property var barDomains: Config.nameList(read("barDomains", []))
   // Floored, not theme-pure: a sharp theme would otherwise render every corner square.
@@ -122,6 +126,14 @@ QtObject {
   function persistStatsInterval(value) {
     config.error = ""
     persist("statsInterval", Math.max(1, Math.min(60, Math.round(Number(value) || 3))))
+  }
+
+  function persistBarNameLength(value) {
+    persist("barNameLength", Config.barNameLength(value))
+  }
+
+  function persistBarAlias(domain, value) {
+    persist("barAliases", Config.withBarAlias(barAliases, domain, value))
   }
 
   function persistColor(name, text) {
