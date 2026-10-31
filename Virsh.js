@@ -23,11 +23,11 @@ var ACTION_VERBS = [
   "suspend", "reboot", "managedsave", "managedsave-remove"
 ]
 
-// Column 0 tags each line (R/P/A/M/E) so names with spaces parse. Never exits nonzero.
+// Column 0 tags each line (R/P/A/M/E/X) so names with spaces parse. Never exits nonzero.
 function pollScript(uri) {
   return [
     "u=" + shq(uri),
-    "command -v virsh >/dev/null 2>&1 || { echo 'E virsh is not installed'; exit 0; }",
+    "command -v virsh >/dev/null 2>&1 || { echo 'X Install the libvirt package, which provides virsh.'; exit 0; }",
     "all=$(virsh -c \"$u\" -q list --all --name 2>&1)",
     "if [ $? -ne 0 ]; then",
     "  printf 'E %s\\n' \"$(printf '%s' \"$all\" | tr '\\n' ' ')\"",
@@ -41,13 +41,14 @@ function pollScript(uri) {
   ].join("\n")
 }
 
-// Returns { error, domains, running, paused }; the caller decides what to assign.
+// Returns { error, missing, domains, running, paused }; the caller decides what to assign.
 function parsePoll(text) {
   var running = ({})
   var paused = ({})
   var saved = ({})
   var names = []
   var error = ""
+  var missing = false
 
   var lines = String(text || "").split("\n")
   for (var i = 0; i < lines.length; i++) {
@@ -56,6 +57,7 @@ function parsePoll(text) {
     var value = line.substring(2)
     switch (line.charAt(0)) {
       case "E": error = value; break
+      case "X": error = value; missing = true; break
       case "R": running[key(value)] = true; break
       case "P": paused[key(value)] = true; break
       case "M": saved[key(value)] = true; break
@@ -64,7 +66,7 @@ function parsePoll(text) {
   }
 
   if (error !== "")
-    return { error: error, domains: [], running: running, paused: paused }
+    return { error: error, missing: missing, domains: [], running: running, paused: paused }
 
   var list = []
   for (var j = 0; j < names.length; j++) {
@@ -80,7 +82,7 @@ function parsePoll(text) {
     return a.name.localeCompare(b.name)
   })
 
-  return { error: "", domains: list, running: running, paused: paused }
+  return { error: "", missing: false, domains: list, running: running, paused: paused }
 }
 
 // True when two poll results render identically, so `domains` is not reassigned.
@@ -284,4 +286,20 @@ function expandTemplate(template, uri, name) {
   return String(template)
     .replace(/\{uri\}/g, function () { return shq(uri) })
     .replace(/\{name\}/g, function () { return shq(name) })
+}
+
+// The program a template starts, or "" when quoting or expansion makes that a guess.
+function commandName(template) {
+  var words = String(template || "").trim().split(/\s+/)
+  for (var i = 0; i < words.length; i++) {
+    var word = words[i]
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) continue
+    return /^[^'"`$\\{}();&|<>]+$/.test(word) ? word : ""
+  }
+  return ""
+}
+
+// The host's own `bash -lc`, so PATH matches the launch; only the exit code is read.
+function commandCheckArgv(name) {
+  return ["bash", "-lc", "command -v -- \"$1\" >/dev/null", "bash", String(name)]
 }

@@ -29,3 +29,11 @@ requested snapshot rather than implicitly using the current one.
 aliases, domain selection by real name, Unicode truncation, overflow,
 configuration limits, RAM percentages and guest memory statistics including
 cache and fallback behavior. They do not connect to libvirt or modify VMs.
+
+## Missing tool tests
+
+`missing-tools.cjs` covers the two install gaps the widget reports: the poll's
+`X` line when `virsh` is not on `PATH` (run for real with an empty `PATH`), and
+the console check — which program a `console` template starts, giving up on
+anything quoted or expanded, and passing that name to `command -v` positionally
+so it is never script text. It needs `bash` but not libvirt.

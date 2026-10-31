@@ -159,7 +159,8 @@ KeyboardPanel {
         visible: popup.listView
         textFormat: Text.PlainText
         elide: Text.ElideRight
-        text: Interface.connectionLabel(popup.service.connectionDown)
+        text: Interface.connectionLabel(popup.service.connectionDown,
+          popup.service.backendMissing)
         color: popup.service.connectionDown ? popup.urgent : Qt.darker(Commons.Color.popups.text, 1.4)
         font.family: popup.fontFamily
         font.pixelSize: Style.font.caption
@@ -266,16 +267,14 @@ KeyboardPanel {
         onKeysReleased: keyCatcher.forceActiveFocus()
       }
 
-      Text {
+      Notice {
         width: parent.width
-        visible: text !== ""
-        textFormat: Text.PlainText
-        wrapMode: Text.WordWrap
-        text: Interface.errorText(popup.config.error, popup.service.lastError,
-          popup.service.actionError)
-        color: popup.urgent
-        font.family: popup.fontFamily
-        font.pixelSize: Style.font.bodySmall
+        model: Interface.notice(popup.config.error, popup.service.lastError,
+          popup.service.actionError, popup.service.backendMissing, popup.service.missingConsole)
+        radius: popup.config.radius
+        foreground: popup.foreground
+        urgent: popup.urgent
+        fontFamily: popup.fontFamily
       }
 
       PanelSeparator {

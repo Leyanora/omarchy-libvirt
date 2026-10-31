@@ -51,8 +51,17 @@ Item {
 
   readonly property bool connectionDown: lastError !== ""
 
+  // True when virsh itself is absent, as opposed to a connection that refused.
+  property bool backendMissing: false
+
+  // The console program a click found missing, until the next launch or action.
+  property string missingConsole: ""
+
   // The view owns which row is open; a lost connection has to close them.
   signal domainsLost()
+
+  // The console's program was found; the root runs the command and closes the popup.
+  signal consoleReady(string command)
 
   // ---- Arm then confirm -------------------------------------------------
   function isArmed(verb, domain, snapshot) {
@@ -119,6 +128,7 @@ Item {
 
     polled = true
     lastError = result.error
+    backendMissing = result.missing
     if (result.error !== "") {
       domains = []
       clearArm()
@@ -146,6 +156,33 @@ Item {
       var live = !!result.running[Virsh.key(armedDomain)] || !!result.paused[Virsh.key(armedDomain)]
       if (!defined || (armedVerb === "destroy" && !live))
         clearArm()
+    }
+  }
+
+  // ---- Console --------------------------------------------------------
+  // Checked per click, not per poll: only the launch's own login shell has the right PATH.
+  function launchConsole(binary, command) {
+    if (consoleCheck.running) return
+    if (binary === "") {
+      service.consoleReady(command)
+      return
+    }
+    missingConsole = ""
+    consoleCheck.binary = binary
+    consoleCheck.pending = command
+    consoleCheck.command = Virsh.commandCheckArgv(binary)
+    consoleCheck.running = true
+  }
+
+  Process {
+    id: consoleCheck
+    property string binary: ""
+    property string pending: ""
+    stdout: StdioCollector {}  // a login profile may print; only the exit code counts
+    stderr: StdioCollector {}
+    onExited: function (exitCode, exitStatus) {
+      if (exitCode === 0) service.consoleReady(pending)
+      else service.missingConsole = binary
     }
   }
 
@@ -299,6 +336,7 @@ Item {
   function runCommand(argv, domain) {
     if (busy) return false
     actionError = ""
+    missingConsole = ""
     clearArm()
     actionCommand = argv
     busy = true

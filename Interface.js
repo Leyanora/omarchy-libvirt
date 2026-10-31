@@ -38,7 +38,11 @@ var Glyph = {
   search: "󰍉",
   current: "󰄬",
   cpu: "󰻠",
-  memory: "󰍛"
+  memory: "󰍛",
+  notInstalled: "󰏗",
+  disconnected: "󰌙",
+  noConsole: "󰶐",
+  alert: "󰀨"
 }
 
 // CPU at or past this reads urgent, in the row and nowhere else.
@@ -48,8 +52,33 @@ var CPU_HOT = 90
 var BAR_STATS_MAX = 3
 var BAR_NAME_MAX = 12
 
-function connectionLabel(down) {
+// A missing binary is not a dead connection: nothing on the host is there to bring up.
+function connectionLabel(down, missing) {
+  if (missing) return "Not installed"
   return down ? "Disconnected" : "Connected"
+}
+
+// The popup's one notice, or null: a missing tool outranks the error it causes.
+function notice(settingsError, lastError, actionError, backendMissing, missingConsole) {
+  if (settingsError !== "")
+    return { glyph: Glyph.alert, title: "Setting not saved", body: settingsError, command: "" }
+  if (backendMissing)
+    return { glyph: Glyph.notInstalled, title: "virsh is missing",
+      body: "Install libvirt, which provides it. The popup notices by itself.",
+      command: "sudo pacman -S libvirt" }
+  if (lastError !== "")
+    return { glyph: Glyph.disconnected, title: "No connection", body: lastError, command: "" }
+  // Names the package only for the default viewer; a custom one is the user's to know.
+  if (missingConsole === "virt-viewer")
+    return { glyph: Glyph.noConsole, title: "virt-viewer is missing",
+      body: "Consoles open in virt-viewer, which brings spice-gtk for SPICE.",
+      command: "sudo pacman -S virt-viewer" }
+  if (missingConsole !== "")
+    return { glyph: Glyph.noConsole, title: plain(missingConsole) + " is missing",
+      body: "The console setting starts it, but it is not on PATH.", command: "" }
+  if (actionError !== "")
+    return { glyph: Glyph.alert, title: "virsh refused", body: actionError, command: "" }
+  return null
 }
 
 // lastError wins: with the connection down the counts mean nothing.
@@ -159,10 +188,4 @@ function barText(icon, count, showLabel, statsText) {
   if (showLabel) parts.push(count)
   if (statsText !== "") parts.push(statsText)
   return parts.join("  ")
-}
-
-// settingsError first: the user just caused it, by hand.
-function errorText(settingsError, lastError, actionError) {
-  if (settingsError !== "") return settingsError
-  return lastError !== "" ? lastError : actionError
 }

@@ -46,6 +46,8 @@ QtObject {
 
   // Named consoleCommand, not console: `console` is a JS global in every QML scope.
   readonly property string consoleCommand: read("console", "virt-viewer --connect {uri} {name}")
+  // Only ever looked up with `command -v` as a positional argument, never run from here.
+  readonly property string consoleBinary: Virsh.commandName(consoleCommand)
 
   // ---- State light colours ---------------------------------------------
   // The one sanctioned hardcode: a state light must read green/red.
