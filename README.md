@@ -169,8 +169,10 @@ hand-edited. The URI is the one value the picker will not let you type: it ends
 up in every `virsh` call, so it is chosen from a list rather than entered.
 
 Under the title: **Connected** when libvirt answered the last poll,
-**Disconnected** in red with the error below it when it did not. The URI is on
-hover. The widget only reads and drives domains — it never starts libvirt, so a
+**Disconnected** in red when it did not, and **Not installed** when there is no
+`virsh` at all. Either way a boxed notice below says what went wrong, and for a
+missing `virsh` or `virt-viewer` it also shows the package to install (see
+[Prerequisites](#prerequisites)). The URI is on hover. The widget only reads and drives domains — it never starts libvirt, so a
 dead connection is yours to bring up from a terminal.
 
 `virsh shutdown` and friends return when the request is queued, not when the
@@ -178,16 +180,31 @@ guest acts on it, so expect a row to change state a beat after you click.
 
 ## Prerequisites
 
-Install these packages before enabling the widget:
+**This plugin needs manual setup.** `omarchy plugin add` installs the widget,
+not libvirt or a console viewer, and without `virsh` the widget can do nothing
+but show a **virsh is missing** notice. Install the required set first:
+
+```bash
+sudo pacman -S libvirt qemu-full virt-viewer
+```
 
 | Package | Why |
 |---|---|
 | `libvirt` | **Required.** Provides `virsh`, the entire backend |
-| `qemu-full` | The hypervisor, plus every guest architecture and its firmware |
-| `virt-viewer` | **Required for consoles** — it is what clicking a domain name opens |
+| `qemu-full` | **Required** (or `qemu-desktop`). The hypervisor, its SPICE modules, every guest architecture and its firmware |
+| `virt-viewer` | **Required for consoles.** What clicking a domain name opens; it pulls in `spice-gtk` |
 | `virt-manager` | Only the popup's footer button. Set `"manager": ""` to hide that row |
 | `edk2-ovmf` | UEFI firmware for guests. Optional, but a modern guest usually wants it |
 | `dnsmasq` | Only for `qemu:///system`: the `default` NAT network needs it for DHCP |
+
+**SPICE** is how a console reaches you, and it needs both ends. On the viewer
+side, `virt-viewer` brings `spice-gtk`. On the guest side, QEMU loads SPICE as
+modules — `qemu-ui-spice-core`, `qemu-chardev-spice`, `qemu-hw-display-qxl` and
+`qemu-audio-spice` — which `qemu-full` and `qemu-desktop` include and
+`qemu-base` does not. Without them, a domain whose XML has
+`<graphics type='spice'>` refuses to start, and the popup shows libvirt's error.
+If `virt-viewer` itself is missing, clicking a name shows a notice saying so
+instead of launching nothing.
 
 KVM needs no group membership on Arch — `/dev/kvm` is world-writable by udev
 rule. Check with `test -w /dev/kvm && echo ok`.
@@ -204,6 +221,8 @@ in the `libvirt` group, the libvirt daemon sockets have to be running, and the
 refuses to start.
 
 ## Install
+
+Install the [prerequisites](#prerequisites) first, then:
 
 ```bash
 omarchy plugin add https://github.com/Leyanora/omarchy-libvirt.git --enable

@@ -3,6 +3,22 @@
 Notable changes to Omarchy qemu widget. Versions are the `version` field in
 `manifest.json`, and follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.1] — 2026-10-31
+
+- **Errors are a boxed, centred notice** rather than a bare red line: a glyph,
+  a title, the detail, and — for a missing tool — the package to install.
+- **"virsh is missing" instead of "Disconnected"** when libvirt is not
+  installed. The header reads *Not installed*; a dead connection still reads
+  Disconnected.
+- **A missing console viewer is reported, not silently skipped.** Clicking a
+  domain name checks for the console program first, in the same login shell
+  the launch uses, and shows a *virt-viewer is missing* notice rather than
+  doing nothing.
+- **The README makes setup explicit.** `omarchy plugin add` does not install
+  libvirt, so the prerequisites now open with the required
+  `sudo pacman -S libvirt qemu-full virt-viewer` and say which packages carry
+  SPICE on each end of a console.
+
 ## [1.10.0] — 2026-10-31
 
 - **More compact bar readouts** (#6). Under *Bar labels* in the settings view,

@@ -99,8 +99,8 @@ BarWidget {
 
   function openConsole(domain) {
     if (config.consoleCommand === "" || domain === "" || !bar) return
-    bar.run(Virsh.expandTemplate(config.consoleCommand, config.uri, domain))
-    close()
+    service.launchConsole(config.consoleBinary,
+      Virsh.expandTemplate(config.consoleCommand, config.uri, domain))
   }
 
   // ---- Keyboard --------------------------------------------------------
@@ -214,6 +214,11 @@ BarWidget {
       root.expandedDomain = ""
       root.snapshotDomain = ""
       root.cursorIndex = -1
+    }
+    onConsoleReady: function (command) {
+      if (!root.bar) return
+      root.bar.run(command)
+      root.close()
     }
   }
 
