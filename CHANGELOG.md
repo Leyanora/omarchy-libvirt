@@ -3,6 +3,25 @@
 Notable changes to Omarchy qemu widget. Versions are the `version` field in
 `manifest.json`, and follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] — 2026-10-31
+
+- **More compact bar readouts** (#6). Under *Bar labels* in the settings view,
+  the bar readout can drop domain names (just the icon and CPU), add memory as
+  `c:2% r:35%`, cap labels at 1–40 characters, and use a per-domain alias.
+  Aliases change only the bar label, never the tooltip, the popup or a virsh
+  command. *CPU usage in the bar* is now *Usage in the bar*.
+- New settings: `barShowNames`, `barMemory`, `barNameLength` and `barAliases`.
+- **Memory leaves out reclaimable cache.** With balloon statistics it is now
+  guest total minus available memory (`MemTotal - MemAvailable`), falling back
+  to total minus free on older guests and to host RSS without statistics.
+  Guest figures are measured against the guest total, not the allocation.
+- **Names starting with `-` are passed to virsh as names** (#5). Domain and
+  snapshot names now go through `--domain` and `--snapshotname`, so a snapshot
+  called `--current` reverts or deletes that snapshot and not another one.
+- The popup now scrolls when the settings view is taller than the screen.
+- Node tests in `tests/` cover virsh argv, bar labels and memory figures
+  (`node --test tests/*.cjs`).
+
 ## [1.9.0] — 2026-10-22
 
 - **CPU and memory per domain** (#4). Running rows show CPU and memory in use,
