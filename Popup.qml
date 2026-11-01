@@ -270,7 +270,8 @@ KeyboardPanel {
       Notice {
         width: parent.width
         model: Interface.notice(popup.config.error, popup.service.lastError,
-          popup.service.actionError, popup.service.backendMissing, popup.service.missingConsole)
+          popup.service.actionError, popup.service.backendMissing, popup.service.missingConsole,
+          popup.config.uri)
         radius: popup.config.radius
         foreground: popup.foreground
         urgent: popup.urgent

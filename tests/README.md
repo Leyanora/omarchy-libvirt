@@ -37,3 +37,9 @@ cache and fallback behavior. They do not connect to libvirt or modify VMs.
 the console check — which program a `console` template starts, giving up on
 anything quoted or expanded, and passing that name to `command -v` positionally
 so it is never script text. It needs `bash` but not libvirt.
+
+The same file checks which setup lines each notice shows: packages alone on
+`qemu:///session`; the libvirt group, the sockets and the `default` network on
+`qemu:///system`; the network or `dnsmasq` fix when a start fails for either. A
+network name read from virsh's error that is not a plain identifier falls back
+to `default`.
