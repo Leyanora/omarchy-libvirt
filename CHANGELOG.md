@@ -3,6 +3,23 @@
 Notable changes to Omarchy qemu widget. Versions are the `version` field in
 `manifest.json`, and follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.2] — 2026-11-01
+
+- **Notices show the setup that fixes them, picked by connection.** A missing
+  `virsh` lists `libvirt qemu-full virt-viewer`. On `qemu:///system` it also
+  lists `dnsmasq`, the `libvirt` group (`usermod`), the daemon sockets
+  (`systemctl enable --now …`) and the `default` network. A dead
+  `qemu:///system` connection shows the group, socket and network lines.
+  `qemu:///session` needs none of them, so it never shows them.
+- **A domain that will not start because its network is down** shows
+  `net-autostart`/`net-start` for that network. A missing `dnsmasq` shows the
+  package line. The lines are only shown, never run.
+- **Long setup lines wrap** inside the notice instead of being cut off.
+- **The README prerequisites spell out the whole `qemu:///system` setup again**,
+  as 1.6.0 did: the group, `dnsmasq`, the sockets, the `default` network and the
+  monolithic `libvirtd.socket` alternative. They also give a one-line install
+  of every package the table mentions.
+
 ## [1.10.1] — 2026-10-31
 
 - **Errors are a boxed, centred notice** rather than a bare red line: a glyph,

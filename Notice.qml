@@ -7,7 +7,7 @@ import qs.Ui
 BorderSurface {
   id: notice
 
-  // { glyph, title, body, command } from Interface.notice(), or null for nothing to say.
+  // { glyph, title, body, commands[] } from Interface.notice(), or null for nothing to say.
   property var model: null
   property color foreground: Commons.Color.popups.text
   property color urgent: Commons.Color.urgent
@@ -63,9 +63,9 @@ BorderSurface {
     // Shown, never run: the widget makes no package call of its own.
     BorderSurface {
       anchors.horizontalCenter: parent.horizontalCenter
-      visible: notice.model !== null && notice.model.command !== ""
+      visible: notice.model !== null && notice.model.commands.length > 0
       width: Math.min(parent.width, command.implicitWidth + Style.spacing.lg * 2)
-      height: command.implicitHeight + Style.spacing.sm * 2
+      height: command.height + Style.spacing.sm * 2
       radius: notice.radius
       color: Style.normalFillFor(notice.foreground, Commons.Color.accent)
       borderSpec: Border.flat(Qt.darker(notice.foreground, 1.8), Math.max(1, Style.space(1)))
@@ -74,10 +74,10 @@ BorderSurface {
         id: command
         anchors.centerIn: parent
         width: Math.min(implicitWidth, parent.width - Style.spacing.lg * 2)
-        horizontalAlignment: Text.AlignHCenter
-        elide: Text.ElideRight
+        // The systemctl line is wider than the card; wrapping beats eliding a command.
+        wrapMode: Text.WrapAtWordBoundaryOrAnywhere
         textFormat: Text.PlainText
-        text: notice.model ? notice.model.command : ""
+        text: notice.model ? notice.model.commands.join("\n") : ""
         color: notice.foreground
         font.family: notice.fontFamily
         font.pixelSize: Style.font.bodySmall

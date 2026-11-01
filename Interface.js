@@ -58,26 +58,58 @@ function connectionLabel(down, missing) {
   return down ? "Disconnected" : "Connected"
 }
 
+// Setup lines a notice shows and never runs; the widget makes no package call of its own.
+var SYSTEM_URI = "qemu:///system"
+var SETUP = {
+  packages: "sudo pacman -S libvirt qemu-full virt-viewer",
+  viewer: "sudo pacman -S virt-viewer",
+  dnsmasq: "sudo pacman -S dnsmasq",
+  group: ["sudo usermod -aG libvirt $USER", "# then log out and back in"],
+  sockets: "sudo systemctl enable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket"
+}
+
+// The name comes from virsh's stderr, so anything but a plain identifier reads `default`.
+function networkSetup(name) {
+  var net = /^[A-Za-z0-9_.-]+$/.test(name || "") ? name : "default"
+  return ["sudo virsh net-autostart " + net, "sudo virsh net-start " + net]
+}
+
+// Session needs none of this: virsh spawns its own daemon and guests get user networking.
+function systemSetup() {
+  return SETUP.group.concat([SETUP.sockets], networkSetup("default"))
+}
+
 // The popup's one notice, or null: a missing tool outranks the error it causes.
-function notice(settingsError, lastError, actionError, backendMissing, missingConsole) {
+function notice(settingsError, lastError, actionError, backendMissing, missingConsole, uri) {
+  var system = uri === SYSTEM_URI
   if (settingsError !== "")
-    return { glyph: Glyph.alert, title: "Setting not saved", body: settingsError, command: "" }
+    return { glyph: Glyph.alert, title: "Setting not saved", body: settingsError, commands: [] }
   if (backendMissing)
     return { glyph: Glyph.notInstalled, title: "virsh is missing",
-      body: "Install libvirt, which provides it. The popup notices by itself.",
-      command: "sudo pacman -S libvirt" }
+      body: "Install libvirt and QEMU, which provide it. The popup notices by itself."
+        + (system ? " qemu:///system also needs the libvirt group, its sockets and a network." : ""),
+      commands: [SETUP.packages].concat(system ? [SETUP.dnsmasq].concat(systemSetup()) : []) }
   if (lastError !== "")
-    return { glyph: Glyph.disconnected, title: "No connection", body: lastError, command: "" }
+    return { glyph: Glyph.disconnected, title: "No connection", body: lastError,
+      commands: system ? systemSetup() : [] }
   // Names the package only for the default viewer; a custom one is the user's to know.
   if (missingConsole === "virt-viewer")
     return { glyph: Glyph.noConsole, title: "virt-viewer is missing",
       body: "Consoles open in virt-viewer, which brings spice-gtk for SPICE.",
-      command: "sudo pacman -S virt-viewer" }
+      commands: [SETUP.viewer] }
   if (missingConsole !== "")
     return { glyph: Glyph.noConsole, title: plain(missingConsole) + " is missing",
-      body: "The console setting starts it, but it is not on PATH.", command: "" }
+      body: "The console setting starts it, but it is not on PATH.", commands: [] }
+  // dnsmasq first: a network that cannot start for lack of it is not fixed by net-start.
+  if (/dnsmasq/i.test(actionError))
+    return { glyph: Glyph.notInstalled, title: "dnsmasq is missing",
+      body: actionError, commands: [SETUP.dnsmasq] }
+  var down = /network '([^']*)' is not active/.exec(actionError)
+  if (down)
+    return { glyph: Glyph.disconnected, title: "Network not started",
+      body: actionError, commands: networkSetup(down[1]) }
   if (actionError !== "")
-    return { glyph: Glyph.alert, title: "virsh refused", body: actionError, command: "" }
+    return { glyph: Glyph.alert, title: "virsh refused", body: actionError, commands: [] }
   return null
 }
 

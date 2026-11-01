@@ -170,9 +170,13 @@ up in every `virsh` call, so it is chosen from a list rather than entered.
 
 Under the title: **Connected** when libvirt answered the last poll,
 **Disconnected** in red when it did not, and **Not installed** when there is no
-`virsh` at all. Either way a boxed notice below says what went wrong, and for a
-missing `virsh` or `virt-viewer` it also shows the package to install (see
-[Prerequisites](#prerequisites)). The URI is on hover. The widget only reads and drives domains — it never starts libvirt, so a
+`virsh` at all. Either way a boxed notice below says what went wrong, along with
+the setup lines that fix it (see [Prerequisites](#prerequisites)). A missing
+`virsh` or `virt-viewer` gets its packages. A dead `qemu:///system` connection
+gets the `libvirt` group, the daemon sockets and the `default` network. A domain
+that will not start because its network is down, or because `dnsmasq` is
+missing, gets that one fix. The lines are only shown, never run. The URI is on
+hover. The widget only reads and drives domains — it never starts libvirt, so a
 dead connection is yours to bring up from a terminal.
 
 `virsh shutdown` and friends return when the request is queued, not when the
@@ -186,6 +190,12 @@ but show a **virsh is missing** notice. Install the required set first:
 
 ```bash
 sudo pacman -S libvirt qemu-full virt-viewer
+```
+
+Or everything the table below mentions, the optional ones included:
+
+```bash
+sudo pacman -S libvirt qemu-full virt-viewer virt-manager edk2-ovmf
 ```
 
 | Package | Why |
@@ -214,11 +224,20 @@ spawns `virtqemud` under your own user on first contact, guests get QEMU
 user-mode networking, and definitions live in `~/.config/libvirt/`. The
 trade-off is no inbound connections to guests and no networking between them.
 
-Host-wide `qemu:///system` needs more than the packages. Your user has to be
-in the `libvirt` group, the libvirt daemon sockets have to be running, and the
-`default` network has to be started. `dnsmasq` is only an optional dependency of
-`libvirt`, but without it the `default` NAT network cannot hand out DHCP and
-refuses to start.
+Host-wide `qemu:///system` needs more than the packages: your user in the
+`libvirt` group, the libvirt daemon sockets running, and the `default` network
+started:
+
+```bash
+sudo usermod -aG libvirt $USER           # then log out and back in
+sudo pacman -S dnsmasq                   # the default NAT network needs it
+sudo systemctl enable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket
+sudo virsh net-autostart default && sudo virsh net-start default
+```
+
+`dnsmasq` is only an optional dependency of `libvirt`, but without it the
+`default` NAT network cannot hand out DHCP and refuses to start. Hosts on the
+monolithic daemon use `libvirtd.socket` in place of the three units above.
 
 ## Install
 

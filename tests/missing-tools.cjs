@@ -64,7 +64,7 @@ test('commandCheckArgv passes the name positionally, never as script text', () =
 test('a missing tool outranks the error it causes, and names its package', () => {
   const missing = ui.notice('', 'Install the libvirt package, which provides virsh.', '', true, '');
   assert.equal(missing.title, 'virsh is missing');
-  assert.equal(missing.command, 'sudo pacman -S libvirt');
+  assert.deepEqual([...missing.commands], ['sudo pacman -S libvirt qemu-full virt-viewer']);
   assert.equal(missing.glyph, ui.Glyph.notInstalled);
   assert.equal(ui.notice('', 'refused', '', false, '').title, 'No connection');
   assert.equal(ui.notice('', 'refused', '', false, '').body, 'refused');
@@ -73,11 +73,44 @@ test('a missing tool outranks the error it causes, and names its package', () =>
 test('the console notice names the package only for the default viewer', () => {
   const viewer = ui.notice('', '', '', false, 'virt-viewer');
   assert.equal(viewer.title, 'virt-viewer is missing');
-  assert.equal(viewer.command, 'sudo pacman -S virt-viewer');
+  assert.deepEqual([...viewer.commands], ['sudo pacman -S virt-viewer']);
   assert.match(viewer.body, /spice-gtk/);
   const custom = ui.notice('', '', '', false, 'rv<b>');
   assert.equal(custom.title, 'rvb> is missing');
-  assert.equal(custom.command, '');
+  assert.deepEqual([...custom.commands], []);
+});
+
+const SYSTEM = 'qemu:///system';
+const SESSION = 'qemu:///session';
+
+test('session setup never shows the system-only steps', () => {
+  const missing = ui.notice('', '', '', true, '', SESSION).commands.join('\n');
+  assert.doesNotMatch(missing, /usermod|systemctl|net-start|dnsmasq/);
+  assert.deepEqual([...ui.notice('', 'refused', '', false, '', SESSION).commands], []);
+});
+
+test('qemu:///system names the group, the sockets and the default network', () => {
+  const missing = ui.notice('', '', '', true, '', SYSTEM).commands;
+  assert.equal(missing[0], 'sudo pacman -S libvirt qemu-full virt-viewer');
+  assert.ok(missing.includes('sudo pacman -S dnsmasq'));
+  const down = ui.notice('', 'Permission denied', '', false, '', SYSTEM);
+  assert.equal(down.body, 'Permission denied');
+  const lines = down.commands.join('\n');
+  assert.match(lines, /usermod -aG libvirt \$USER/);
+  assert.match(lines, /systemctl enable --now virtqemud\.socket virtnetworkd\.socket virtstoraged\.socket/);
+  assert.match(lines, /net-autostart default/);
+  assert.match(lines, /net-start default/);
+});
+
+test('a stopped network or a missing dnsmasq gets its own fix', () => {
+  const net = ui.notice('', '', "Requested operation is not valid: network 'lab' is not active", false, '');
+  assert.equal(net.title, 'Network not started');
+  assert.deepEqual([...net.commands], ['sudo virsh net-autostart lab', 'sudo virsh net-start lab']);
+  const odd = ui.notice('', '', "network 'a; rm -rf ~' is not active", false, '');
+  assert.deepEqual([...odd.commands], ['sudo virsh net-autostart default', 'sudo virsh net-start default']);
+  const dns = ui.notice('', '', 'Cannot check dnsmasq binary dnsmasq: No such file or directory', false, '');
+  assert.equal(dns.title, 'dnsmasq is missing');
+  assert.deepEqual([...dns.commands], ['sudo pacman -S dnsmasq']);
 });
 
 test('precedence: settings, then virsh, then connection, then console, then action', () => {
