@@ -202,6 +202,8 @@ BarWidget {
     id: service
     uri: config.uri
     interval: config.interval
+    popupOpen: root.popupOpen
+    pauseWhenIdle: config.pauseWhenIdle
     confirmForceOff: config.confirmForceOff
     confirmDiscardSaved: config.confirmDiscardSaved
     confirmSnapshotRevert: config.confirmSnapshotRevert

@@ -9,6 +9,8 @@ Item {
   // ---- Inputs ----------------------------------------------------------
   property string uri: "qemu:///session"
   property int interval: 10
+  property bool popupOpen: false
+  property bool pauseWhenIdle: false
   property bool confirmForceOff: true
   property bool confirmDiscardSaved: true
   property bool confirmSnapshotRevert: true
@@ -31,6 +33,13 @@ Item {
   property string lastError: ""
   property string actionError: ""
   property bool busy: false
+
+  // Child-process availability controls. Read probes are short; mutations get
+  // more time but remain finite. Output bounds are bytes per stream.
+  readonly property int probeTimeoutMs: 10000
+  readonly property int actionTimeoutMs: 30000
+  readonly property int maxProbeOutputBytes: 1048576
+  readonly property int maxErrorOutputBytes: 65536
 
   property string busyDomain: ""
 
@@ -174,34 +183,55 @@ Item {
     consoleCheck.running = true
   }
 
-  Process {
+  GuardedProcess {
     id: consoleCheck
+    timeoutMs: service.probeTimeoutMs
+    maxStdoutBytes: service.maxErrorOutputBytes
+    maxStderrBytes: service.maxErrorOutputBytes
     property string binary: ""
     property string pending: ""
-    stdout: StdioCollector {}  // a login profile may print; only the exit code counts
-    stderr: StdioCollector {}
-    onExited: function (exitCode, exitStatus) {
-      if (exitCode === 0) service.consoleReady(pending)
+    onGuardedExited: function (exitCode, exitStatus) {
+      if (timedOut || outputExceeded) service.missingConsole = binary
+      else if (exitCode === 0) service.consoleReady(pending)
       else service.missingConsole = binary
     }
   }
 
   // No `-l`, no BASH_ENV: a startup file's output would parse as a poll record.
-  Process {
+  GuardedProcess {
     id: poll
+    timeoutMs: service.probeTimeoutMs
+    maxStdoutBytes: service.maxProbeOutputBytes
+    maxStderrBytes: service.maxErrorOutputBytes
     command: ["env", "-u", "BASH_ENV", "bash", "-c", Virsh.pollScript(service.uri)]
-    stdout: StdioCollector {
-      onStreamFinished: service.applyPoll(text)
+    onStdoutComplete: function (text) { service.applyPoll(text) }
+    onGuardedExited: function (exitCode, exitStatus) {
+      var failure = failureMessage("libvirt poll")
+      if (failure !== "") {
+        service.lastError = failure
+        service.domains = []
+        service.clearStats()
+        service.domainsLost()
+      }
     }
   }
 
+  // When pauseWhenIdle is enabled, poll only while the popup is open or a domain
+  // is live/in transition so `virtqemud --timeout=120` can exit when idle.
+  readonly property bool activePolling: Virsh.shouldPoll(
+    pauseWhenIdle, popupOpen, runningCount, pausedCount, busy, Object.keys(shutdownAt).length > 0
+  )
+
   Timer {
-    running: true
+    id: pollTimer
+    running: service.activePolling
     interval: service.interval * 1000
     repeat: true
-    triggeredOnStart: true
     onTriggered: service.refresh()
   }
+
+  // Run a single startup probe to discover existing domains and already-running VMs.
+  Component.onCompleted: if (!poll.running) refresh()
 
   // A different connection is a different set of domains, so nothing survives it.
   onUriChanged: {
@@ -251,13 +281,16 @@ Item {
     stats = next
   }
 
-  Process {
+  GuardedProcess {
     id: statsProbe
+    timeoutMs: service.probeTimeoutMs
+    maxStdoutBytes: service.maxProbeOutputBytes
+    maxStderrBytes: service.maxErrorOutputBytes
     command: Virsh.statsArgv(service.uri)
-    stdout: StdioCollector {
-      onStreamFinished: service.applyStats(text)
+    onStdoutComplete: function (text) { service.applyStats(text) }
+    onGuardedExited: function (exitCode, exitStatus) {
+      if (timedOut || outputExceeded) service.clearStats()
     }
-    stderr: StdioCollector {}
   }
 
   Timer {
@@ -355,17 +388,19 @@ Item {
       runAction("managedsave-remove", domain)
   }
 
-  Process {
+  GuardedProcess {
     id: action
+    timeoutMs: service.actionTimeoutMs
+    maxStdoutBytes: service.maxErrorOutputBytes
+    maxStderrBytes: service.maxErrorOutputBytes
     command: service.actionCommand
-    stdout: StdioCollector {}  // dropped; the popup shows state, not chatter
-    stderr: StdioCollector {
-      onStreamFinished: service.actionError = Virsh.lastLine(text)
-    }
-    onExited: function (exitCode, exitStatus) {
+    onStderrComplete: function (text) { service.actionError = Virsh.lastLine(text) }
+    onGuardedExited: function (exitCode, exitStatus) {
       service.busy = false
       service.busyDomain = ""
-      if (exitCode === 0) service.actionError = ""
+      var failure = failureMessage("libvirt action")
+      if (failure !== "") service.actionError = failure
+      else if (exitCode === 0) service.actionError = ""
       settle.ticks = 0
       settle.restart()
       service.refresh()
@@ -406,22 +441,28 @@ Item {
     detailState.running = true
   }
 
-  Process {
+  GuardedProcess {
     id: detailInfo
+    timeoutMs: service.probeTimeoutMs
+    maxStdoutBytes: service.maxProbeOutputBytes
+    maxStderrBytes: service.maxErrorOutputBytes
     command: service.detailInfoCommand
-    stdout: StdioCollector {
-      onStreamFinished: service.detail = Virsh.parseDomInfo(text)
+    onStdoutComplete: function (text) { service.detail = Virsh.parseDomInfo(text) }
+    onGuardedExited: function (exitCode, exitStatus) {
+      if (timedOut || outputExceeded) service.detail = ({ cpus: 0, memory: "" })
     }
-    stderr: StdioCollector {}
   }
 
-  Process {
+  GuardedProcess {
     id: detailState
+    timeoutMs: service.probeTimeoutMs
+    maxStdoutBytes: service.maxProbeOutputBytes
+    maxStderrBytes: service.maxErrorOutputBytes
     command: service.detailStateCommand
-    stdout: StdioCollector {
-      onStreamFinished: service.detailReason = Virsh.parseDomState(text)
+    onStdoutComplete: function (text) { service.detailReason = Virsh.parseDomState(text) }
+    onGuardedExited: function (exitCode, exitStatus) {
+      if (timedOut || outputExceeded) service.detailReason = ""
     }
-    stderr: StdioCollector {}
   }
 
   // Driven by the property, not by whatever expanded the row, so no route in stales it.
@@ -445,23 +486,29 @@ Item {
     snapshotCurrent.running = true
   }
 
-  Process {
+  GuardedProcess {
     id: snapshotList
+    timeoutMs: service.probeTimeoutMs
+    maxStdoutBytes: service.maxProbeOutputBytes
+    maxStderrBytes: service.maxErrorOutputBytes
     command: service.snapshotCommand
-    stdout: StdioCollector {
-      onStreamFinished: service.snapshots = Virsh.parseSnapshotList(text)
+    onStdoutComplete: function (text) { service.snapshots = Virsh.parseSnapshotList(text) }
+    onGuardedExited: function (exitCode, exitStatus) {
+      if (timedOut || outputExceeded) service.snapshots = []
     }
-    stderr: StdioCollector {}
   }
 
   // Errors on a domain with no snapshots at all, which is why stderr is dropped.
-  Process {
+  GuardedProcess {
     id: snapshotCurrent
+    timeoutMs: service.probeTimeoutMs
+    maxStdoutBytes: service.maxProbeOutputBytes
+    maxStderrBytes: service.maxErrorOutputBytes
     command: service.currentCommand
-    stdout: StdioCollector {
-      onStreamFinished: service.currentSnapshot = Virsh.parseSnapshotCurrent(text)
+    onStdoutComplete: function (text) { service.currentSnapshot = Virsh.parseSnapshotCurrent(text) }
+    onGuardedExited: function (exitCode, exitStatus) {
+      if (timedOut || outputExceeded) service.currentSnapshot = ""
     }
-    stderr: StdioCollector {}
   }
 
   // Driven by the property, not by whatever opened the view, so no route in stales it.
