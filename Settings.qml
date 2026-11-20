@@ -32,6 +32,7 @@ QtObject {
   readonly property bool showSnapshots: read("showSnapshots", true)
   readonly property bool showStats: read("showStats", true)
   readonly property bool barStats: read("barStats", false)
+  readonly property bool pauseWhenIdle: read("pauseWhenIdle", false)
   readonly property int statsInterval: Math.max(1, Math.min(60, read("statsInterval", 3)))
   readonly property bool barMemory: read("barMemory", false)
   readonly property bool barShowNames: read("barShowNames", true)
@@ -74,6 +75,7 @@ QtObject {
       case "showSnapshots": return showSnapshots
       case "showStats": return showStats
       case "barStats": return barStats
+      case "pauseWhenIdle": return pauseWhenIdle
       case "confirmForceOff": return confirmForceOff
       case "confirmDiscardSaved": return confirmDiscardSaved
       case "confirmSnapshotRevert": return confirmSnapshotRevert

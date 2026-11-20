@@ -287,6 +287,7 @@ by the plugin id — not the display name:
 |---|---|---|
 | `uri` | `qemu:///session` | libvirt connection URI. Also selectable from the cogwheel |
 | `interval` | `10` | Poll seconds; floored at 2. Also editable from the cogwheel |
+| `pauseWhenIdle` | `false` | Pause background polling when no domains are running/paused and the popup is closed, letting `virtqemud --timeout=120` sleep. Opening the popup, middle-click, scroll or IPC `refresh` polls immediately. Also editable from the cogwheel |
 | `icon` | `󰒋` | Bar glyph |
 | `showCount` | `false` | Show the running count next to the glyph. Also editable from the cogwheel |
 | `confirmForceOff` | `true` | Require the second click on force off. Also editable from the cogwheel |

@@ -24,6 +24,8 @@ var BEHAVIOUR_SETTINGS = [
     description: "On running rows; 100% CPU is every assigned vCPU busy." },
   { name: "barStats", label: "Usage in the bar",
     description: "Samples while on, even with the popup closed." },
+  { name: "pauseWhenIdle", label: "Pause polling when idle",
+    description: "Stops background virsh checks when no domains are live and the popup is closed, letting virtqemud sleep." },
   { name: "confirmForceOff", label: "Confirm force off",
     description: "Force off discards unwritten guest state." },
   { name: "confirmDiscardSaved", label: "Confirm discarding saved state",

@@ -303,3 +303,10 @@ function commandName(template) {
 function commandCheckArgv(name) {
   return ["bash", "-lc", "command -v -- \"$1\" >/dev/null", "bash", String(name)]
 }
+
+// When pauseWhenIdle is on, poll periodically only while the popup is open or a domain
+// is live/in transition so session daemons like `virtqemud --timeout=120` can exit.
+function shouldPoll(pauseWhenIdle, popupOpen, runningCount, pausedCount, busy, shutdownPending) {
+  if (!pauseWhenIdle) return true
+  return !!(popupOpen || runningCount > 0 || pausedCount > 0 || busy || shutdownPending)
+}
